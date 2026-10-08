@@ -2,14 +2,13 @@ name: Auto Post to Blogger
 
 on:
   schedule:
-    # 30分おき (毎時21分、51分) に実行 (GitHub Actions混雑回避のためオフセット設定)
-    - cron: '21,51 * * * *'
+    # 2時間おき (偶数時の15分) に実行 (GitHub Actions混雑回避のためオフセット設定)
+    - cron: '15 */2 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   models: read
-
 
 jobs:
   post:
@@ -45,7 +44,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: python mikke_blogger.py
+        run: python kaden_blogger.py
 
       - name: Commit and Push Cache Update
         run: |

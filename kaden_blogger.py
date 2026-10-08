@@ -73,9 +73,29 @@ def fetch_rakuten_item():
     if not app_id or not access_key:
         raise ValueError("RAKUTEN_APP_ID and RAKUTEN_ACCESS_KEY must be set in environment variables.")
 
-    attributes = ["フィギュア", "ガチャ", "メロジョイ", "レア", "セット", "マスコット"]
-    selected_attribute = random.choice(attributes)
-    keyword = f"スクイーズ {selected_attribute}"
+    kaden_keywords = [
+        "小型家電 便利グッズ",
+        "小型家電 キッチン 一人暮らし",
+        "コンパクト家電 人気",
+        "卓上加湿器 おしゃれ",
+        "ハンディファン 冷却プレート",
+        "ミニブレンダー スムージー",
+        "コードレス ミニアイロン",
+        "コンパクト ホットプレート 一人用",
+        "ミニ炊飯器 1合",
+        "小型コーヒーメーカー",
+        "毛玉取り器 電動 コードレス",
+        "モバイルバッテリー 急速充電 小型",
+        "ポータブル扇風機 小型",
+        "デスクヒーター 小型 省エネ",
+        "小型サーキュレーター 静音",
+        "ハンディクリーナー 強力吸引 軽量",
+        "電動ミル コーヒー 小型",
+        "小型衣類スチーマー 旅行",
+        "卓上冷風機 静音",
+        "電気ケトル 小型 コンパクト"
+    ]
+    keyword = random.choice(kaden_keywords)
     print(f"Searching Rakuten for keyword: {keyword}")
 
     url = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401"
@@ -132,7 +152,7 @@ def generate_article_with_llm(item):
         f'🛒 楽天市場で価格・在庫を見る</a></div>'
     )
 
-    prompt = f"""以下の楽天の商品情報を基にして、ブログ記事のタイトルとHTML本文を生成してください。
+    prompt = f"""以下の楽天の小型家電・生活便利家電の情報を基にして、読者が欲しくなる魅力的なブログ記事のタイトルとHTML本文を生成してください。
 【商品名】: {title}
 【価格】: {price}円
 【商品説明】: {caption[:300]}
@@ -154,7 +174,7 @@ def generate_article_with_llm(item):
 3. 【厳禁事項】: Amazon, Yahoo, 他社ECサイトなどのリンクや名称は絶対に含めないでください。
 """
 
-    system_message = "あなたはプロのトレンド紹介ブロガーです。指示された仕様に完全に従い、JSONフォーマットのみで出力します。"
+    system_message = "あなたは暮らしを豊かにする小型家電・ガジェット専門のレビューブロガーです。指示された仕様に完全に従い、JSONフォーマットのみで出力します。"
 
     def parse_json_response(text):
         import json as _json
@@ -592,13 +612,13 @@ def generate_room_comment_with_llm(item):
     price = item.get("itemPrice") or item.get("price") or ""
     caption = item.get("itemCaption") or item.get("catchcopy") or ""
 
-    prompt = f"""以下のトレンドホビー・キャラクター商品情報を基にして、楽天ROOM用の魅力的な紹介コメント（400文字以内）を生成してください。
+    prompt = f"""以下の小型家電・生活便利グッズの商品情報を基にして、楽天ROOM用の魅力的な紹介コメント（400文字以内）を生成してください。
 【商品名】: {title}
 【価格】: {price}円
 【商品説明・特徴】: {caption[:200]}
 
 以下の要件を厳格に遵守してください：
-1. 口調・トーン：ホビー・キャラグッズファンに刺さる自然な語り口とし、「これかわいい！」「これ気になってた！」「これ便利だよ！」といった安易な定型表現は絶対に使用しないでください。
+1. 口調・トーン：一人暮らしや時短・暮らしの質を高めたい読者に刺さる自然で魅力的な語り口とし、「これかわいい！」「これ気になってた！」「これ便利だよ！」といった安易な定型表現は絶対に使用しないでください。
 2. 文字数：400文字以内（厳守。超えると投稿エラーになります）。
 3. 絵文字：5〜8個使用して華やかにすること。
 4. ハッシュタグ：3〜5個（商品のカテゴリや関連するもの）含め、末尾に「#楽天市場」を必ず含めること。
@@ -607,8 +627,8 @@ def generate_room_comment_with_llm(item):
 """
 
     system_message = (
-        "あなたはホビー・人気キャラクター専門のトップレビューブロガー・インフルエンサーです。"
-        "定型フレーズを排し、商品の造形美・限定感・収集欲をくすぐる具体的で熱量のあるオリジナル紹介文を作成してください。"
+        "あなたは生活家電・便利ガジェット専門の人気レビューインフルエンサーです。"
+        "定型フレーズを排し、商品の使い勝手・サイズ感・実際の生活での便利さをリアルにイメージできる具体的で熱量のあるオリジナル紹介文を作成してください。"
     )
 
     def clean_text(text):
