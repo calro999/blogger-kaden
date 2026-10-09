@@ -35,6 +35,49 @@ def save_to_cache(item_code):
     with open(CACHE_FILE, "a", encoding="utf-8") as f:
         f.write(f"{item_code}\n")
 
+def clean_rakuten_item_name(name):
+    """楽天特有のクーポン・セール・ノイズ単語を除去して綺麗な商品名を抽出する"""
+    import re
+    if not name:
+        return "注目アイテム"
+    cleaned = re.sub(r'【[^】]*】', '', name)
+    cleaned = re.sub(r'\[[^\]]*\]', '', cleaned)
+    cleaned = re.sub(r'（[^）]*）', '', cleaned)
+    cleaned = re.sub(r'\([^\)]*\)', '', cleaned)
+    
+    noise_patterns = [
+        r'クーポン(?:で|\s*利用で|\s*配布中|\s*対象)?\s*[0-9,]+円?(?:OFF|off)?',
+        r'P[0-9]+倍',
+        r'ポイント[0-9]+倍',
+        r'送料無料',
+        r'即納',
+        r'あす楽',
+        r'マラソン(?:限定)?',
+        r'スーパーセール',
+        r'お買い物マラソン',
+        r'楽天(?:1位|ランキング1位|デイリー1位)',
+        r'[0-9]+%OFF',
+        r'[0-9]+％OFF',
+        r'★[0-9\.]+★?',
+        r'レビュー特典',
+        r'公式(?:店)?',
+    ]
+    for pat in noise_patterns:
+        cleaned = re.sub(pat, '', cleaned, flags=re.IGNORECASE)
+        
+    words = [w.strip() for w in cleaned.split() if w.strip()]
+    seen = set()
+    cleaned_words = []
+    for w in words:
+        if w not in seen and len(w) > 1:
+            seen.add(w)
+            cleaned_words.append(w)
+        if len(' '.join(cleaned_words)) >= 28:
+            break
+            
+    res = ' '.join(cleaned_words).strip()
+    return res if res else (words[0] if words else name[:25])
+
 def get_rakuten_affiliate_url(item, affiliate_id):
     aff_url = item.get("affiliateUrl")
     if aff_url and "hb.afl.rakuten.co.jp" in aff_url:
@@ -131,7 +174,8 @@ def fetch_rakuten_item():
     raise RuntimeError("All fetched items have already been posted.")
 
 def generate_article_with_llm(item):
-    title = item.get("itemName", "")
+    raw_title = item.get("itemName", "")
+    title = clean_rakuten_item_name(raw_title)
     price = item.get("itemPrice", "")
     caption = item.get("itemCaption", "")
     affiliate_id = os.environ.get("RAKUTEN_AFFILIATE_ID")
@@ -155,8 +199,9 @@ def generate_article_with_llm(item):
         f'🛒 楽天市場で価格・在庫を見る</a></div>'
     )
 
-    prompt = f"""以下の楽天の小型家電・生活便利家電の情報を基にして、読者が欲しくなる魅力的なブログ記事のタイトルとHTML本文を生成してください。
-【商品名】: {title}
+    prompt = f"""以下の小型家電・生活便利家電の情報を基にして、読者が欲しくなる魅力的なブログ記事のタイトルとHTML本文を生成してください。
+【商品名（整形済み）】: {title}
+【元の商品情報】: {raw_title[:150]}
 【価格】: {price}円
 【商品説明】: {caption[:300]}
 【商品画像URL】: {image_url}
@@ -314,7 +359,7 @@ def generate_article_with_llm(item):
                 print(f"GitHub Models API ({model_name}) error: {e}")
 
     print("WARNING: All online LLM generation attempts failed or rate limited. Generating high-quality tailored fallback HTML.")
-    clean_title = title.replace("【", "").replace("】", "")[:35]
+    clean_title = clean_rakuten_item_name(title)[:30]
     img_tag = f'<img src="{image_url}" alt="{clean_title}" style="max-width: 100%; height: auto;"><br>' if image_url else ""
     fallback_html = (
         f'<div class="article-wrapper">'
@@ -611,7 +656,8 @@ def post_to_blogger(title, content):
 
 def generate_room_comment_with_llm(item):
     import random
-    title = item.get("itemName") or item.get("title") or ""
+    raw_title = item.get("itemName") or item.get("title") or ""
+    title = clean_rakuten_item_name(raw_title)
     price = item.get("itemPrice") or item.get("price") or ""
     caption = item.get("itemCaption") or item.get("catchcopy") or ""
 
