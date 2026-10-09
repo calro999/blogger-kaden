@@ -122,6 +122,9 @@ def fetch_rakuten_item():
     for item_wrapper in items:
         item = item_wrapper.get("Item", {})
         item_code = item.get("itemCode")
+        name = item.get("itemName", "")
+        if any(ng in name for ng in ["リサイクル券", "回収", "利用券", "チケット", "処分", "修理"]):
+            continue
         if item_code and item_code not in posted_cache:
             return item
 
@@ -771,7 +774,7 @@ def generate_room_comment_with_llm(item):
     body = random.choice(bodies)
 
     price_info = f"（価格: {price}円）" if price else ""
-    return f"{starter}\n\n{body}\n{price_info}\n\n#{keyword} #楽天市場 #おすすめアイテム #コレ"
+    return f"{starter}\n\n{body}\n{price_info}\n\n#小型家電 #楽天市場 #おすすめアイテム #コレ"
 
 
 def post_to_rakuten_room(item_code, comment):
