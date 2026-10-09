@@ -2,3 +2,4 @@ joisafakey:10000038
 riccado:10000389
 petmimi:10000068
 gaoye:10000059
+kukuya:10000080
