@@ -15,3 +15,4 @@ apiness:10147102
 otokukan:10000061
 nokastore:10004084
 hitidear:10000187
+yumenomori:10000233
