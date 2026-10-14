@@ -33,3 +33,4 @@ suzukidenkioutlets:10018029
 ikoi:10021488
 lifeonproducts:10000554
 riccado:10000381
+askrtech:10000749
