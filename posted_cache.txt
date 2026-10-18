@@ -44,3 +44,4 @@ d-dish:10002341
 iyashishop:10001568
 cocoa:10006739
 tokyobiken:10000123
+bruno-official:10000325
