@@ -54,3 +54,4 @@ dondon:10003669
 auc-riverp:10017282
 licomshop:10000961
 solemood:10000098
+amamineshop:10019925
