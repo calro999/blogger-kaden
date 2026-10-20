@@ -57,3 +57,4 @@ solemood:10000098
 amamineshop:10019925
 kigu-coffee:10000000
 amosroom:10007783
+roomy:10010866
