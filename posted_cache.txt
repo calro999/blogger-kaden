@@ -60,3 +60,4 @@ amosroom:10007783
 roomy:10010866
 matsucame:10065548
 meijo:10000006
+kato-shoten-japan:10006855
