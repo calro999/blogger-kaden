@@ -59,3 +59,4 @@ kigu-coffee:10000000
 amosroom:10007783
 roomy:10010866
 matsucame:10065548
+meijo:10000006
