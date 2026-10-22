@@ -62,3 +62,4 @@ matsucame:10065548
 meijo:10000006
 kato-shoten-japan:10006855
 mikirona:10000103
+wetradingjapan:10001256
