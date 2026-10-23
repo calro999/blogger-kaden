@@ -71,3 +71,4 @@ yamazenkaden:10003488
 bruno-official:10000287
 ekagulife:10016182
 kadenrand:10152449
+megumishop:10002628
