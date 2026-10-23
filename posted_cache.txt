@@ -68,3 +68,4 @@ watashinosalon:10021886
 k-home:10057550
 interior-curtain:10004595
 yamazenkaden:10003488
+bruno-official:10000287
