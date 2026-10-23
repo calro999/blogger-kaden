@@ -508,141 +508,175 @@ def post_to_blogger(title, content):
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             try:
-                time.sleep(random.uniform(3.0, 5.0))
+                time.sleep(random.uniform(2.0, 3.0))
 
-                page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
-                time.sleep(random.uniform(3.0, 5.0))
+                # まず投稿一覧画面を開く
+                posts_url = f"https://draft.blogger.com/blog/posts/{blog_id}"
+                print(f"Navigating to Blogger posts list: {posts_url}")
+                page.goto(posts_url, wait_until="networkidle")
+                time.sleep(2)
+
+                # --- 0. 過去の失敗下書きや空ドラフトを自動検知して破棄（クリーンアップ） ---
+                try:
+                    manage_btn = page.locator('[aria-label="投稿リストを管理"]').first
+                    if manage_btn.is_visible():
+                        manage_btn.click()
+                        time.sleep(0.5)
+                        checkboxes = page.locator('[role="checkbox"]').all()
+                        draft_count = 0
+                        for cb in checkboxes[1:]:
+                            text = cb.evaluate("el => el.parentElement && el.parentElement.parentElement ? el.parentElement.parentElement.innerText : ''")
+                            if "下書き" in text or "(無題)" in text:
+                                cb.click()
+                                draft_count += 1
+                        if draft_count > 0:
+                            print(f"Found {draft_count} abandoned draft(s). Discarding...")
+                            for c in page.locator('[aria-label*="破棄"], [aria-label*="ゴミ箱"]').all():
+                                if c.is_visible():
+                                    c.click()
+                                    break
+                            time.sleep(0.5)
+                            page.evaluate('''() => {
+                                const btns = Array.from(document.querySelectorAll('div[role="button"], button'));
+                                const target = btns.find(b => b.innerText && (b.innerText.includes("破棄") || b.innerText.includes("ゴミ箱に移動")));
+                                if (target) target.click();
+                            }''')
+                            time.sleep(1.5)
+                            print("Abandoned drafts cleaned up successfully!")
+                        else:
+                            # 選択解除のために再度クリック
+                            manage_btn.click()
+                            time.sleep(0.5)
+                except Exception as clean_err:
+                    print(f"Draft cleanup note (non-critical): {clean_err}")
+
+                # --- 1. 新しい投稿作成画面へUIから確実に遷移 ---
+                print("Clicking '新しい投稿を作成' button...")
+                new_post_clicked = False
+                for btn in page.locator('[aria-label="新しい投稿を作成"]').all():
+                    if btn.is_visible():
+                        btn.click()
+                        new_post_clicked = True
+                        break
                 
-                # もし画面が遷移していなかったら、キーボードショートカット 'c' (新規投稿) を試す
-                if "edit" not in page.url:
+                if not new_post_clicked:
+                    print("Visible '新しい投稿を作成' not found, falling back to direct navigation / shortcut...")
                     page.keyboard.press('c')
-                    time.sleep(random.uniform(3.0, 5.0))
-                
-                # それでもダメならJSで強制的に「新しい投稿」ボタンをクリックする
-                if "edit" not in page.url:
-                    page.evaluate('''() => {
-                        const btns = Array.from(document.querySelectorAll('div[role="button"]'));
-                        const newPostBtn = btns.find(b => (b.getAttribute('aria-label') || '').includes('新しい投稿') || (b.getAttribute('aria-label') || '').includes('New post'));
-                        if (newPostBtn) newPostBtn.click();
-                    }''')
-                    time.sleep(random.uniform(3.0, 5.0))
+                    time.sleep(2)
+                    if "edit" not in page.url:
+                        page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
 
-                # 1. タイトル入力
-                title_input = page.locator('.titleField input, input[aria-label*="Title"], input[aria-label*="タイトル"]').first
-                title_input.wait_for(state="visible", timeout=30000)
+                page.wait_for_url("**/blog/post/edit/**", timeout=20000)
+                time.sleep(2)
+                print(f"Successfully on editor page: {page.url}")
+
+                # --- 2. タイトル入力 ---
+                title_input = page.locator('input[aria-label*="タイトル"], input[aria-label*="Title"], .titleField input').locator("visible=true").first
+                title_input.wait_for(state="visible", timeout=20000)
                 title_input.click()
                 time.sleep(0.5)
-                # タイトルを全消去して入力
-                page.keyboard.press('Meta+A')
-                page.keyboard.press('Control+A')
-                page.keyboard.press('Backspace')
-                # 1-2. タイトルと本文入力（検証ループ付き）
-                max_retries = 3
-                success = False
-                
-                for attempt in range(max_retries):
-                    print(f"--- Attempt {attempt+1} / {max_retries} ---")
-                    
-                    if attempt > 0:
-                        print("Reloading page for retry...")
-                        page.reload(wait_until="domcontentloaded")
-                        time.sleep(3)
-                    
-                    try:
-                        title_input = page.locator('input.titleField, input[aria-label="タイトル"], input[aria-label="Title"]').locator("visible=true").first
-                        title_input.fill(title)
-                        time.sleep(2)
-                        
-                        print("Focusing on the rich text editor via Tab navigation...")
-                        # タイトル入力後、Tabキーを2回押せば通常本文エリアにフォーカスが当たる
-                        page.keyboard.press('Tab')
-                        time.sleep(0.5)
-                        page.keyboard.press('Tab')
-                        time.sleep(1)
-                        
-                        # 念のためエディタらしきものをクリックも試す
-                        try:
-                            editor_body = page.locator('div[aria-label="本文"], div[aria-label="Body"], div[role="textbox"], iframe').locator("visible=true").first
-                            editor_body.click(timeout=3000)
-                        except:
-                            pass
-                            
-                        print("Injecting HTML via Playwright clipboard paste...")
-                        # クリップボードにHTMLとしてコピー
-                        page.evaluate('''html => {
-                            try {
-                                const blob = new Blob([html], { type: 'text/html' });
-                                const data = [new ClipboardItem({ 'text/html': blob })];
-                                navigator.clipboard.write(data);
-                            } catch (e) {
-                                console.error('Clipboard write failed:', e);
-                            }
-                        }''', content)
-                        time.sleep(2)
-                        
-                        # ペースト実行
-                        page.keyboard.press('Control+V')
-                        page.keyboard.press('Meta+V') # Mac用
-                        time.sleep(2)
-                        
-                        # Wizオートセーブ誘発のためのダミータイピング
-                        print("Triggering Wiz autosave...")
-                        page.keyboard.press('Space')
-                        time.sleep(0.5)
-                        page.keyboard.press('Backspace')
-                        time.sleep(3)
-                        
-                        # --- 本文入力の検証 ---
-                        print("Validating injected content...")
-                        # 特定の要素にこだわらず、ページ全体のHTMLを取得して画像タグが含まれるか確認する
-                        page_html = page.content()
-                        
-                        if "<img" in page_html and ("href" in page_html or "http" in page_html):
-                            print("Validation passed: Body content (image and links) successfully detected in page!")
-                            success = True
-                            break
-                        else:
-                            print("Validation failed: Body seems empty or missing images in page DOM.")
-                            print("Page HTML snippet:", page_html[:200])
-                            
-                    except Exception as e:
-                        print(f"Error during injection attempt {attempt+1}: {e}")
-                        
-                    time.sleep(3)
-                
-                if not success:
-                    raise Exception("Critical Failure: Could not inject body content after 3 attempts. Aborting save to prevent empty drafts.")
+                title_input.fill(title)
+                time.sleep(1)
+                print(f"Entered title: {title}")
 
-                # 3. 公開ボタンのクリック
+                # --- 3. 本文HTMLの注入 ---
+                print("Injecting HTML content...")
+                injected = False
+                
+                # 方法A: CodeMirror（HTMLビュー）が存在すれば直接setValueで確実に注入
+                try:
+                    cm_res = page.evaluate('''(html) => {
+                        const cm = document.querySelector(".CodeMirror");
+                        if (cm && cm.CodeMirror) {
+                            cm.CodeMirror.setValue(html);
+                            cm.CodeMirror.save();
+                            return cm.CodeMirror.getValue().length;
+                        }
+                        return 0;
+                    }''', content)
+                    if cm_res > 0:
+                        print(f"Successfully injected HTML via CodeMirror (len: {cm_res})!")
+                        injected = True
+                except Exception as e_cm:
+                    print(f"CodeMirror injection failed: {e_cm}")
+
+                # 方法B: リッチテキストエディタのiframe.editable内のbodyへTrustedHTMLポリシーを考慮して注入
+                if not injected:
+                    for frame in page.frames:
+                        if frame != page.main_frame:
+                            try:
+                                res = frame.evaluate('''(html) => {
+                                    const b = document.body;
+                                    if (!b || b.getAttribute("role") !== "textbox") return false;
+                                    let trusted = html;
+                                    if (window.trustedTypes && window.trustedTypes.createPolicy) {
+                                        try {
+                                            const p = window.trustedTypes.createPolicy("blogger_post_policy", { createHTML: s => s });
+                                            trusted = p.createHTML(html);
+                                        } catch(e) {
+                                            if (window.trustedTypes.defaultPolicy) trusted = window.trustedTypes.defaultPolicy.createHTML(html);
+                                        }
+                                    }
+                                    b.innerHTML = trusted;
+                                    b.dispatchEvent(new Event("input", {bubbles: true}));
+                                    b.dispatchEvent(new Event("change", {bubbles: true}));
+                                    return true;
+                                }''', content)
+                                if res:
+                                    print("Successfully injected HTML via iframe.editable body!")
+                                    injected = True
+                                    break
+                            except Exception:
+                                pass
+
+                # 方法C: クリップボードペーストフォールバック
+                if not injected:
+                    print("Falling back to clipboard paste injection...")
+                    page.keyboard.press('Tab')
+                    time.sleep(0.5)
+                    page.keyboard.press('Tab')
+                    time.sleep(1)
+                    page.evaluate('''html => {
+                        try {
+                            const blob = new Blob([html], { type: 'text/html' });
+                            const data = [new ClipboardItem({ 'text/html': blob })];
+                            navigator.clipboard.write(data);
+                        } catch (e) {}
+                    }''', content)
+                    time.sleep(1)
+                    page.keyboard.press('Control+V')
+                    page.keyboard.press('Meta+V')
+                    time.sleep(2)
+
+                # Wizオートセーブ誘発
+                time.sleep(3)
+
+                # --- 4. 公開ボタンのクリック ---
                 print("Publishing post...")
-                try:
-                    pub_btn = page.locator('[aria-label="公開"], [aria-label="Publish"]').locator("visible=true").first
-                    pub_btn.scroll_into_view_if_needed()
-                    time.sleep(1)
-                    pub_btn.click(force=True, timeout=10000)
-                    print("Clicked publish button.")
-                except Exception as e:
-                    print("Failed to click publish button:", e)
-                    # ショートカットフォールバック
-                    page.keyboard.press('Control+Shift+P')
-                    page.keyboard.press('Meta+Shift+P')
-                
-                time.sleep(4)
+                pub_btn = page.locator('[aria-label="公開"], [aria-label="Publish"]').locator("visible=true").first
+                pub_btn.scroll_into_view_if_needed()
+                time.sleep(1)
+                pub_btn.click(force=True, timeout=10000)
+                print("Clicked publish button.")
+                time.sleep(2)
 
-                # 4. 確認ダイアログの「確認」ボタン
-                try:
-                    conf_btn = page.locator('[aria-label="確認"], [aria-label="Confirm"], div[role="button"]:has-text("確認")').locator("visible=true").first
-                    conf_btn.scroll_into_view_if_needed()
-                    time.sleep(1)
-                    conf_btn.click(force=True, timeout=10000)
-                    print("Clicked confirm button.")
-                except Exception as e:
-                    print("Failed to click confirm button:", e)
+                # --- 5. 確認ダイアログの「確認」ボタン ---
+                conf_btn = page.locator('div[role="dialog"], div[role="alertdialog"]').locator('div[role="button"], button', has_text="確認").first
+                if conf_btn.is_visible():
+                    conf_btn.click(force=True)
+                    print("Clicked confirm button in dialog.")
+                else:
                     page.keyboard.press('Enter')
-                
-                # 公開通信完了まで十分待機
-                time.sleep(10)
-                print("Successfully published post using Playwright!")
+                    print("Sent Enter key for confirmation.")
+
+                # 公開処理完了待機（投稿一覧URLに戻るまで待機）
+                try:
+                    page.wait_for_url(f"**/blog/posts/{blog_id}*", timeout=15000)
+                    print("Confirmed navigation back to posts list.")
+                except Exception:
+                    time.sleep(5)
+
+                print("Successfully published post to Blogger!")
             except Exception as e:
                 print(f"Error occurred. Current URL: {page.url}")
                 print(f"Page Title: {page.title()}")
