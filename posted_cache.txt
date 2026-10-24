@@ -73,3 +73,4 @@ ekagulife:10016182
 kadenrand:10152449
 megumishop:10002628
 fujiten-shop:10052947
+tokyopt:10000012
