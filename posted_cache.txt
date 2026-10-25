@@ -79,3 +79,4 @@ fujisyouten:10010028
 butterflyshop:10000243
 zakafashion:10000110
 kukuya:10000082
+suzukidenkioutlets:10018031
