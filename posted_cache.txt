@@ -77,3 +77,4 @@ tokyopt:10000012
 fujisyouten:10001770
 fujisyouten:10010028
 butterflyshop:10000243
+zakafashion:10000110
