@@ -541,32 +541,19 @@ def post_to_blogger(title, content):
 
                 time.sleep(random.uniform(2.0, 3.0))
 
-                page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
-                time.sleep(random.uniform(2.0, 4.0))
-                
-                # もし画面が遷移していなかったら、キーボードショートカット 'c' (新規投稿) を試す
-                if "edit" not in page.url:
-                    page.keyboard.press('c')
-                    time.sleep(random.uniform(3.0, 5.0))
-                
-                # それでもダメならJSで強制的に「新しい投稿」ボタンをクリックする
-                if "edit" not in page.url:
-                    page.evaluate('''() => {
-                        const btns = Array.from(document.querySelectorAll('div[role="button"]'));
-                        const newPostBtn = btns.find(b => (b.getAttribute('aria-label') || '').includes('新しい投稿') || (b.getAttribute('aria-label') || '').includes('New post'));
-                        if (newPostBtn) newPostBtn.click();
-                    }''')
-                    time.sleep(random.uniform(3.0, 5.0))
+                # 一覧画面から確実に「新しい投稿を作成」ボタンをクリックしてエディタを展開
+                print("Opening new post editor from posts list...")
+                try:
+                    new_btn = page.locator('[aria-label="新しい投稿を作成"]:visible, div[role="button"]:has-text("新しい投稿"):visible').first
+                    if new_btn.is_visible(timeout=5000):
+                        new_btn.click()
+                    else:
+                        page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
+                except Exception:
+                    page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
 
-                # 1. タイトル入力
-                title_input = page.locator('.titleField input, input[aria-label*="Title"], input[aria-label*="タイトル"]').first
-                title_input.wait_for(state="visible", timeout=30000)
-                title_input.click()
-                time.sleep(0.5)
-                # タイトルを全消去して入力
-                page.keyboard.press('Meta+A')
-                page.keyboard.press('Control+A')
-                page.keyboard.press('Backspace')
+                time.sleep(random.uniform(3.0, 4.0))
+
                 # 1-2. タイトルと本文入力（検証ループ付き）
                 max_retries = 3
                 success = False
@@ -580,40 +567,53 @@ def post_to_blogger(title, content):
                         time.sleep(3)
                     
                     try:
-                        title_input = page.locator('input.titleField, input[aria-label="タイトル"], input[aria-label="Title"]').locator("visible=true").first
-                        title_input.fill(title)
-                        time.sleep(2)
-                        
-                        print("Focusing on the rich text editor via Tab navigation...")
-                        # タイトル入力後、Tabキーを2回押せば通常本文エリアにフォーカスが当たる
-                        page.keyboard.press('Tab')
+                        title_input = page.locator('input.titleField, input[aria-label*="タイトル"], input[aria-label*="Title"]').locator("visible=true").first
+                        title_input.wait_for(state="visible", timeout=15000)
+                        title_input.click()
                         time.sleep(0.5)
-                        page.keyboard.press('Tab')
-                        time.sleep(1)
+                        page.keyboard.press('Control+A')
+                        page.keyboard.press('Meta+A')
+                        page.keyboard.press('Backspace')
+                        title_input.fill(title)
+                        time.sleep(1.5)
                         
-                        # 念のためエディタらしきものをクリックも試す
-                        try:
-                            editor_body = page.locator('div[aria-label="本文"], div[aria-label="Body"], div[role="textbox"], iframe').locator("visible=true").first
-                            editor_body.click(timeout=3000)
-                        except:
-                            pass
-                            
-                        print("Injecting HTML via Playwright clipboard paste...")
-                        # クリップボードにHTMLとしてコピー
-                        page.evaluate('''html => {
-                            try {
-                                const blob = new Blob([html], { type: 'text/html' });
-                                const data = [new ClipboardItem({ 'text/html': blob })];
-                                navigator.clipboard.write(data);
-                            } catch (e) {
-                                console.error('Clipboard write failed:', e);
+                        # 2. 本文入力（CodeMirrorインスタンスへの直接注入 + クリップボードフォールバック）
+                        print("Injecting HTML body content...")
+                        injected = page.evaluate('''html => {
+                            const cmEl = document.querySelector('.CodeMirror');
+                            if (cmEl && cmEl.CodeMirror) {
+                                cmEl.CodeMirror.setValue(html);
+                                if (cmEl.CodeMirror.save) cmEl.CodeMirror.save();
+                                return true;
                             }
+                            return false;
                         }''', content)
-                        time.sleep(2)
                         
-                        # ペースト実行
-                        page.keyboard.press('Control+V')
-                        page.keyboard.press('Meta+V') # Mac用
+                        if injected:
+                            print("Successfully set HTML content via CodeMirror instance.")
+                        else:
+                            print("CodeMirror not found directly. Fallback to rich text editor paste...")
+                            try:
+                                editor_body = page.locator('div[aria-label="本文"], div[aria-label="Body"], div[role="textbox"], iframe').locator("visible=true").first
+                                editor_body.click(timeout=3000)
+                            except:
+                                page.keyboard.press('Tab')
+                                time.sleep(0.5)
+                                page.keyboard.press('Tab')
+                                
+                            page.evaluate('''html => {
+                                try {
+                                    navigator.clipboard.writeText(html);
+                                } catch (e) {
+                                    const blob = new Blob([html], { type: 'text/html' });
+                                    const data = [new ClipboardItem({ 'text/html': blob })];
+                                    navigator.clipboard.write(data);
+                                }
+                            }''', content)
+                            time.sleep(1)
+                            page.keyboard.press('Control+V')
+                            page.keyboard.press('Meta+V')
+
                         time.sleep(2)
                         
                         # Wizオートセーブ誘発のためのダミータイピング
@@ -625,16 +625,20 @@ def post_to_blogger(title, content):
                         
                         # --- 本文入力の検証 ---
                         print("Validating injected content...")
-                        # 特定の要素にこだわらず、ページ全体のHTMLを取得して画像タグが含まれるか確認する
+                        cm_val = page.evaluate('''() => {
+                            const cmEl = document.querySelector('.CodeMirror');
+                            return (cmEl && cmEl.CodeMirror) ? cmEl.CodeMirror.getValue() : '';
+                        }''')
                         page_html = page.content()
+                        effective_html = cm_val if cm_val else page_html
                         
-                        if "<img" in page_html and ("href" in page_html or "http" in page_html):
-                            print("Validation passed: Body content (image and links) successfully detected in page!")
+                        if ("<img" in effective_html or "img" in effective_html) and ("href" in effective_html or "http" in effective_html):
+                            print(f"Validation passed: Body content successfully detected in page (len: {len(effective_html)})!")
                             success = True
                             break
                         else:
                             print("Validation failed: Body seems empty or missing images in page DOM.")
-                            print("Page HTML snippet:", page_html[:200])
+                            print("Effective HTML snippet:", effective_html[:200])
                             
                     except Exception as e:
                         print(f"Error during injection attempt {attempt+1}: {e}")
@@ -648,7 +652,15 @@ def post_to_blogger(title, content):
                 print("Publishing post...")
                 pub_clicked = False
                 try:
-                    # エディタ右上の公開ボタン（一覧画面のボタンではなく、エディタに固有の「公開」ボタン）
+                    pub_btn = page.locator('div[role="button"][aria-label="公開"]:has-text("公開"):visible').first
+                    if pub_btn.is_visible(timeout=5000):
+                        pub_btn.click()
+                        pub_clicked = True
+                        print("Clicked publish button via Playwright locator.")
+                except Exception as e:
+                    print("Locator publish click failed:", e)
+
+                if not pub_clicked:
                     pub_clicked = page.evaluate('''() => {
                         const btns = Array.from(document.querySelectorAll('div[role="button"]'));
                         const b = btns.find(x => x.getAttribute('aria-label') === '公開' && (x.innerText || '').includes('公開'));
@@ -660,19 +672,6 @@ def post_to_blogger(title, content):
                     }''')
                     if pub_clicked:
                         print("Clicked editor publish button via evaluate.")
-                except Exception as e:
-                    print("Evaluate publish click failed:", e)
-
-                if not pub_clicked:
-                    try:
-                        pub_btn = page.locator('div[role="button"][aria-label="公開"]:has-text("公開"):visible').first
-                        pub_btn.click(force=True, timeout=8000)
-                        print("Clicked publish button via locator.")
-                        pub_clicked = True
-                    except Exception as e:
-                        print("Locator publish click failed, trying shortcut:", e)
-                        page.keyboard.press('Control+Shift+P')
-                        page.keyboard.press('Meta+Shift+P')
                 
                 time.sleep(2)
 
