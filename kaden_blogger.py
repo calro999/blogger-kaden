@@ -499,7 +499,7 @@ def post_to_blogger(title, content):
             )
             context = browser.new_context(
                 storage_state=session_file_path,
-                viewport={"width": 1280, "height": 800},
+                viewport={"width": 1920, "height": 1080},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 permissions=['clipboard-read', 'clipboard-write']
             )
@@ -646,22 +646,31 @@ def post_to_blogger(title, content):
 
                 # 3. 公開ボタンのクリック
                 print("Publishing post...")
+                pub_clicked = False
                 try:
-                    pub_btn = page.locator('[aria-label="公開"], [aria-label="Publish"]').locator("visible=true").first
-                    pub_btn.scroll_into_view_if_needed()
-                    time.sleep(1)
-                    pub_btn.click(force=True, timeout=10000)
-                    print("Clicked publish button.")
-                except Exception as e:
-                    print("Failed to click publish button via locator:", e)
-                    clicked_pub = page.evaluate('''() => {
-                        const btns = Array.from(document.querySelectorAll('div[role="button"], button'));
-                        const b = btns.find(x => (x.getAttribute('aria-label') || '').includes('公開') || (x.innerText || '').includes('公開'));
-                        if (b) { b.click(); return true; }
+                    # エディタ右上の公開ボタン（一覧画面のボタンではなく、エディタに固有の「公開」ボタン）
+                    pub_clicked = page.evaluate('''() => {
+                        const btns = Array.from(document.querySelectorAll('div[role="button"]'));
+                        const b = btns.find(x => x.getAttribute('aria-label') === '公開' && (x.innerText || '').includes('公開'));
+                        if (b) {
+                            b.click();
+                            return true;
+                        }
                         return false;
                     }''')
-                    if not clicked_pub:
-                        # ショートカットフォールバック
+                    if pub_clicked:
+                        print("Clicked editor publish button via evaluate.")
+                except Exception as e:
+                    print("Evaluate publish click failed:", e)
+
+                if not pub_clicked:
+                    try:
+                        pub_btn = page.locator('div[role="button"][aria-label="公開"]:has-text("公開"):visible').first
+                        pub_btn.click(force=True, timeout=8000)
+                        print("Clicked publish button via locator.")
+                        pub_clicked = True
+                    except Exception as e:
+                        print("Locator publish click failed, trying shortcut:", e)
                         page.keyboard.press('Control+Shift+P')
                         page.keyboard.press('Meta+Shift+P')
                 
@@ -671,12 +680,12 @@ def post_to_blogger(title, content):
                 print("Confirming publication in dialog...")
                 confirmed = False
                 try:
-                    # Bloggerの日本語UIではダイアログ内のボタンは「確定」または「確認」
+                    # Bloggerの日本語UIではダイアログ内のボタンは「確定」
                     confirmed = page.evaluate('''() => {
-                        const dialog = document.querySelector('div[role="alertdialog"], div[role="dialog"]');
+                        const dialog = document.querySelector('div[role="alertdialog"]');
                         if (dialog) {
                             const btns = Array.from(dialog.querySelectorAll('div[role="button"], button'));
-                            const target = btns.find(b => b.innerText && (
+                            const target = btns.find(b => b.offsetParent !== null && b.innerText && (
                                 b.innerText.includes("確定") || 
                                 b.innerText.includes("確認") || 
                                 b.innerText.includes("公開")
@@ -695,7 +704,7 @@ def post_to_blogger(title, content):
 
                 if not confirmed:
                     try:
-                        conf_btn = page.locator('div[role="alertdialog"] div[role="button"]:has-text("確定"), div[role="alertdialog"] div[role="button"]:has-text("確認"), [aria-label="確認"], [aria-label="Confirm"]').locator("visible=true").first
+                        conf_btn = page.locator('div[role="alertdialog"] div[role="button"]:has-text("確定"):visible').first
                         conf_btn.click(force=True, timeout=5000)
                         print("Clicked confirm button via locator.")
                         confirmed = True
