@@ -90,3 +90,4 @@ enetroom:10156620
 gekiyasu1:10016690
 sunshine-store:10000561
 tramonto:10001235
+la-ma:10000978
