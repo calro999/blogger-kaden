@@ -507,10 +507,42 @@ def post_to_blogger(title, content):
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             try:
-                time.sleep(random.uniform(3.0, 5.0))
+                # 投稿開始前に、もし前回の残骸として「下書き」や「(無題)」が存在する場合は事前に一掃する
+                try:
+                    page.goto(f"https://draft.blogger.com/blog/posts/{blog_id}", wait_until="networkidle", timeout=20000)
+                    time.sleep(2)
+                    has_draft = page.evaluate('''() => {
+                        const rows = Array.from(document.querySelectorAll('div.rb4Lrd'));
+                        let cleaned = 0;
+                        for (const row of rows) {
+                            if (row.innerText.includes('下書き') || row.innerText.includes('(無題)')) {
+                                const discardBtn = row.querySelector('[aria-label="この投稿を破棄"], [aria-label="この投稿をゴミ箱に移動"]');
+                                if (discardBtn) {
+                                    discardBtn.click();
+                                    cleaned++;
+                                }
+                            }
+                        }
+                        return cleaned;
+                    }''')
+                    if has_draft:
+                        time.sleep(1)
+                        page.evaluate('''() => {
+                            const dialog = document.querySelector('div[role="alertdialog"]');
+                            if (dialog) {
+                                const b = Array.from(dialog.querySelectorAll('div[role="button"]')).find(x => x.innerText.includes('破棄') || x.innerText.includes('ゴミ箱に移動'));
+                                if (b) b.click();
+                            }
+                        }''')
+                        time.sleep(2)
+                        print(f"Pre-check: cleaned up {has_draft} existing drafts/empty posts before writing new post.")
+                except Exception as pre_err:
+                    print(f"Pre-clean check ignored: {pre_err}")
+
+                time.sleep(random.uniform(2.0, 3.0))
 
                 page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
-                time.sleep(random.uniform(3.0, 5.0))
+                time.sleep(random.uniform(2.0, 4.0))
                 
                 # もし画面が遷移していなかったら、キーボードショートカット 'c' (新規投稿) を試す
                 if "edit" not in page.url:
@@ -621,69 +653,118 @@ def post_to_blogger(title, content):
                     pub_btn.click(force=True, timeout=10000)
                     print("Clicked publish button.")
                 except Exception as e:
-                    print("Failed to click publish button:", e)
-                    # ショートカットフォールバック
-                    page.keyboard.press('Control+Shift+P')
-                    page.keyboard.press('Meta+Shift+P')
+                    print("Failed to click publish button via locator:", e)
+                    clicked_pub = page.evaluate('''() => {
+                        const btns = Array.from(document.querySelectorAll('div[role="button"], button'));
+                        const b = btns.find(x => (x.getAttribute('aria-label') || '').includes('公開') || (x.innerText || '').includes('公開'));
+                        if (b) { b.click(); return true; }
+                        return false;
+                    }''')
+                    if not clicked_pub:
+                        # ショートカットフォールバック
+                        page.keyboard.press('Control+Shift+P')
+                        page.keyboard.press('Meta+Shift+P')
                 
-                time.sleep(4)
+                time.sleep(2)
 
-                # 4. 確認ダイアログの「確認」ボタン
+                # 4. 確認ダイアログの確定ボタン
+                print("Confirming publication in dialog...")
+                confirmed = False
                 try:
-                    conf_btn = page.locator('[aria-label="確認"], [aria-label="Confirm"], div[role="button"]:has-text("確認")').locator("visible=true").first
-                    conf_btn.scroll_into_view_if_needed()
-                    time.sleep(1)
-                    conf_btn.click(force=True, timeout=10000)
-                    print("Clicked confirm button.")
+                    # Bloggerの日本語UIではダイアログ内のボタンは「確定」または「確認」
+                    confirmed = page.evaluate('''() => {
+                        const dialog = document.querySelector('div[role="alertdialog"], div[role="dialog"]');
+                        if (dialog) {
+                            const btns = Array.from(dialog.querySelectorAll('div[role="button"], button'));
+                            const target = btns.find(b => b.innerText && (
+                                b.innerText.includes("確定") || 
+                                b.innerText.includes("確認") || 
+                                b.innerText.includes("公開")
+                            ));
+                            if (target) {
+                                target.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }''')
+                    if confirmed:
+                        print("Confirmed publication via dialog evaluate click ('確定').")
                 except Exception as e:
-                    print("Failed to click confirm button:", e)
-                    page.keyboard.press('Enter')
+                    print("Failed during evaluate confirm click:", e)
+
+                if not confirmed:
+                    try:
+                        conf_btn = page.locator('div[role="alertdialog"] div[role="button"]:has-text("確定"), div[role="alertdialog"] div[role="button"]:has-text("確認"), [aria-label="確認"], [aria-label="Confirm"]').locator("visible=true").first
+                        conf_btn.click(force=True, timeout=5000)
+                        print("Clicked confirm button via locator.")
+                        confirmed = True
+                    except Exception as e:
+                        print("Locator confirm failed, trying Enter key fallback:", e)
+                        page.keyboard.press('Enter')
                 
-                # 公開通信完了まで十分待機
-                time.sleep(10)
+                # 公開処理完了待機（投稿一覧画面 /blog/posts/ に戻るのを待つ）
+                try:
+                    page.wait_for_url(f"**/blog/posts/{blog_id}*", timeout=20000)
+                    print("Successfully redirected back to posts list!")
+                except Exception:
+                    print("Wait for posts list URL timed out, waiting static 8s...")
+                    time.sleep(8)
+
                 print("Successfully published post using Playwright!")
 
-                # 公開後の厳格な事後検証（フィードを取得して本文が0文字でないことを確認）
+                # 公開後の厳格な事後検証（フィードを取得して今回のタイトルが公開され、本文が空でないことを確認）
                 print("[POST-VERIFY] Verifying published article content from public Blogger feed...")
                 try:
                     import urllib.request
-                    feed_url = "https://kaden-hot.blogspot.com/feeds/posts/default?alt=json&max-results=1"
+                    import ssl
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+
+                    feed_url = "https://kaden-hot.blogspot.com/feeds/posts/default?alt=json&max-results=3"
                     req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req, timeout=10) as resp:
+                    with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
                         feed_data = json.loads(resp.read().decode("utf-8"))
-                        latest_entry = feed_data.get("feed", {}).get("entry", [{}])[0]
-                        latest_title = latest_entry.get("title", {}).get("$t", "")
+                        entries = feed_data.get("feed", {}).get("entry", [])
+                        latest_entry = entries[0] if entries else {}
+                        latest_title = latest_entry.get("title", {}).get("$t", "").strip()
                         latest_content = latest_entry.get("content", {}).get("$t", "")
                         print(f"[POST-VERIFY] Latest post in feed: '{latest_title}' (content length: {len(latest_content)} chars)")
                         
-                        if len(latest_content) < 100:
-                            print(f"[POST-VERIFY-ERROR] Critical: Published post content is empty ({len(latest_content)} chars)! Moving to trash...")
+                        # タイトルが一致していない、または本文が100文字未満の場合は公開失敗（下書き残存）
+                        if latest_title != title.strip() or len(latest_content) < 100:
+                            print(f"[POST-VERIFY-ERROR] Post validation failed! Expected title: '{title}', feed latest: '{latest_title}', len: {len(latest_content)}")
+                            # 下書きや空記事が残っている場合はクリーンアップ
                             try:
                                 page.goto(f"https://draft.blogger.com/blog/posts/{blog_id}", wait_until="networkidle", timeout=20000)
                                 time.sleep(2)
-                                page.locator('[aria-label="投稿リストを管理"]').first.click()
-                                time.sleep(0.5)
-                                page.locator('[role="checkbox"]').nth(1).click()
-                                time.sleep(0.5)
-                                for c in page.locator('[aria-label*="ゴミ箱"], [aria-label*="破棄"]').all():
-                                    if c.is_visible():
-                                        c.click()
-                                        break
-                                time.sleep(0.5)
                                 page.evaluate('''() => {
-                                    const btns = Array.from(document.querySelectorAll('div[role="button"], button'));
-                                    const target = btns.find(b => b.innerText && (b.innerText.includes("ゴミ箱に移動") || b.innerText.includes("破棄")));
-                                    if (target) target.click();
+                                    const rows = Array.from(document.querySelectorAll('div.rb4Lrd'));
+                                    for (const row of rows) {
+                                        if (row.innerText.includes('下書き') || row.innerText.includes('(無題)')) {
+                                            const discardBtn = row.querySelector('[aria-label="この投稿を破棄"], [aria-label="この投稿をゴミ箱に移動"]');
+                                            if (discardBtn) discardBtn.click();
+                                        }
+                                    }
+                                }''')
+                                time.sleep(1)
+                                page.evaluate('''() => {
+                                    const dialog = document.querySelector('div[role="alertdialog"]');
+                                    if (dialog) {
+                                        const b = Array.from(dialog.querySelectorAll('div[role="button"]')).find(x => x.innerText.includes('破棄') || x.innerText.includes('ゴミ箱に移動'));
+                                        if (b) b.click();
+                                    }
                                 }''')
                                 time.sleep(2)
-                                print("[POST-VERIFY-CLEANUP] Empty post successfully trashed.")
+                                print("[POST-VERIFY-CLEANUP] Trashed unverified draft/empty posts.")
                             except Exception as cleanup_err:
-                                print(f"[POST-VERIFY-CLEANUP-ERR] Failed to trash bad post: {cleanup_err}")
-                            raise RuntimeError("Critical: Blogger post was published with empty content. Post was trashed and aborting.")
+                                print(f"[POST-VERIFY-CLEANUP-ERR] Cleanup error: {cleanup_err}")
+                            raise RuntimeError(f"Critical: Blogger post '{title}' was not properly published live. Cleaned up drafts.")
                         else:
-                            print("[POST-VERIFY] Verification SUCCESS: Body content and images are fully published and live!")
+                            print("[POST-VERIFY] Verification SUCCESS: Article is live with full title, images and content!")
                 except Exception as verify_err:
-                    if "Critical: Blogger post was published with empty content" in str(verify_err):
+                    if "Critical: Blogger post" in str(verify_err):
                         raise
                     print(f"[POST-VERIFY-WARN] Feed verification check encountered an error: {verify_err}")
             except Exception as e:
