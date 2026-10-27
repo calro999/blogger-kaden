@@ -511,21 +511,22 @@ def post_to_blogger(title, content):
                 try:
                     page.goto(f"https://draft.blogger.com/blog/posts/{blog_id}", wait_until="networkidle", timeout=20000)
                     time.sleep(2)
-                    has_draft = page.evaluate('''() => {
-                        const rows = Array.from(document.querySelectorAll('div.rb4Lrd'));
-                        let cleaned = 0;
-                        for (const row of rows) {
-                            if (row.innerText.includes('下書き') || row.innerText.includes('(無題)')) {
-                                const discardBtn = row.querySelector('[aria-label="この投稿を破棄"], [aria-label="この投稿をゴミ箱に移動"]');
-                                if (discardBtn) {
-                                    discardBtn.click();
-                                    cleaned++;
+                    for loop_i in range(5):
+                        clicked_cleanup = page.evaluate('''() => {
+                            const rows = Array.from(document.querySelectorAll('div.rb4Lrd'));
+                            for (const row of rows) {
+                                if (row.innerText.includes('下書き') || row.innerText.includes('(無題)')) {
+                                    const discardBtn = row.querySelector('[aria-label="この投稿を破棄"], [aria-label="この投稿をゴミ箱に移動"]');
+                                    if (discardBtn) {
+                                        discardBtn.click();
+                                        return true;
+                                    }
                                 }
                             }
-                        }
-                        return cleaned;
-                    }''')
-                    if has_draft:
+                            return false;
+                        }''')
+                        if not clicked_cleanup:
+                            break
                         time.sleep(1)
                         page.evaluate('''() => {
                             const dialog = document.querySelector('div[role="alertdialog"]');
@@ -535,7 +536,6 @@ def post_to_blogger(title, content):
                             }
                         }''')
                         time.sleep(2)
-                        print(f"Pre-check: cleaned up {has_draft} existing drafts/empty posts before writing new post.")
                 except Exception as pre_err:
                     print(f"Pre-clean check ignored: {pre_err}")
 
