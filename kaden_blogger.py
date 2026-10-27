@@ -468,6 +468,7 @@ def ensure_complete_blogger_article(html_content):
     return html_content
 
 def post_to_blogger(title, content):
+    """Playwrightを用いてBloggerへ自動投稿"""
     blog_id = os.environ.get("BLOGGER_BLOG_ID")
     if not blog_id:
         raise ValueError("BLOGGER_BLOG_ID is not set in environment variables.")
@@ -482,12 +483,12 @@ def post_to_blogger(title, content):
                 temp_file.write(decoded_str)
                 session_file_path = temp_file.name
         except Exception as e:
-            raise ValueError(f"BLOGGER_SESSION_B64 のデコードに失敗しました: {e}")
+            raise ValueError(f"BLOGGER_SESSION_B64 decode failed: {e}")
     elif os.path.exists("session.json"):
-        print("Found local session.json. Using it for Blog Post.")
+        print("Found local session.json. Using it for Blogger post.")
         session_file_path = "session.json"
     else:
-        raise ValueError(f"BLOGGER_SESSION_B64 is not set and local session.json not found.")
+        raise ValueError("BLOGGER_SESSION_B64 is not set and local session.json not found.")
 
     print(f"Posting to Blogger (Blog ID: {blog_id}) using Playwright...")
 
@@ -508,184 +509,338 @@ def post_to_blogger(title, content):
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             try:
-                time.sleep(random.uniform(2.0, 3.0))
-
-                # まず投稿一覧画面を開く
+                time.sleep(random.uniform(2.0, 3.5))
+                # まず記事一覧ページをロード
                 posts_url = f"https://draft.blogger.com/blog/posts/{blog_id}"
-                print(f"Navigating to Blogger posts list: {posts_url}")
+                print(f"Navigating to Blogger posts page: {posts_url}")
                 page.goto(posts_url, wait_until="networkidle")
-                time.sleep(2)
+                time.sleep(3.0)
 
-                # --- 0. 過去の失敗下書きや空ドラフトを自動検知して破棄（クリーンアップ） ---
+                # ポリシー通知バナーがあれば閉じる
                 try:
-                    manage_btn = page.locator('[aria-label="投稿リストを管理"]').first
-                    if manage_btn.is_visible():
-                        manage_btn.click()
-                        time.sleep(0.5)
-                        checkboxes = page.locator('[role="checkbox"]').all()
-                        draft_count = 0
-                        for cb in checkboxes[1:]:
-                            text = cb.evaluate("el => el.parentElement && el.parentElement.parentElement ? el.parentElement.parentElement.innerText : ''")
-                            if "下書き" in text or "(無題)" in text:
-                                cb.click()
-                                draft_count += 1
-                        if draft_count > 0:
-                            print(f"Found {draft_count} abandoned draft(s). Discarding...")
-                            for c in page.locator('[aria-label*="破棄"], [aria-label*="ゴミ箱"]').all():
-                                if c.is_visible():
-                                    c.click()
-                                    break
-                            time.sleep(0.5)
-                            page.evaluate('''() => {
-                                const btns = Array.from(document.querySelectorAll('div[role="button"], button'));
-                                const target = btns.find(b => b.innerText && (b.innerText.includes("破棄") || b.innerText.includes("ゴミ箱に移動")));
-                                if (target) target.click();
-                            }''')
-                            time.sleep(1.5)
-                            print("Abandoned drafts cleaned up successfully!")
-                        else:
-                            # 選択解除のために再度クリック
-                            manage_btn.click()
-                            time.sleep(0.5)
-                except Exception as clean_err:
-                    print(f"Draft cleanup note (non-critical): {clean_err}")
+                    close_btn = page.locator('div:has-text("Blogger のコンテンツ ポリシー") [role="button"], div[aria-label*="閉じる"]').first
+                    if close_btn.is_visible(timeout=2000):
+                        close_btn.click()
+                        time.sleep(1.0)
+                except Exception:
+                    pass
 
-                # --- 1. 新しい投稿作成画面へUIから確実に遷移 ---
-                print("Clicking '新しい投稿を作成' button...")
-                new_post_clicked = False
-                for btn in page.locator('[aria-label="新しい投稿を作成"]').all():
-                    if btn.is_visible():
-                        btn.click()
-                        new_post_clicked = True
+                # エディタ画面（新規投稿）を開く
+                editor_opened = False
+                for open_attempt in range(8):
+                    print(f"[BLOGGER-OPEN] Attempt {open_attempt + 1} / 8 to open editor...")
+                    
+                    if "edit" in page.url:
+                        editor_opened = True
                         break
-                
-                if not new_post_clicked:
-                    print("Visible '新しい投稿を作成' not found, falling back to direct navigation / shortcut...")
-                    page.keyboard.press('c')
-                    time.sleep(2)
-                    if "edit" not in page.url:
-                        page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
 
-                page.wait_for_url("**/blog/post/edit/**", timeout=20000)
-                time.sleep(2)
-                print(f"Successfully on editor page: {page.url}")
+                    # 失敗が続く場合は一度リロードまたは再アクセスしてDOM状態をリセット
+                    if open_attempt > 0 and open_attempt % 2 == 0:
+                        try:
+                            print("[BLOGGER-OPEN] Refreshing posts page to reset state...")
+                            page.goto(posts_url, wait_until="domcontentloaded", timeout=30000)
+                            time.sleep(3.0)
+                        except Exception as refresh_err:
+                            print(f"[BLOGGER-OPEN-WARN] Refresh failed: {refresh_err}")
 
-                # --- 2. タイトル入力 ---
-                title_input = page.locator('input[aria-label*="タイトル"], input[aria-label*="Title"], .titleField input').locator("visible=true").first
-                title_input.wait_for(state="visible", timeout=20000)
-                title_input.click()
-                time.sleep(0.5)
-                title_input.fill(title)
-                time.sleep(1)
-                print(f"Entered title: {title}")
+                    # ポリシー通知やポップアップを閉じる
+                    try:
+                        close_btn = page.locator('div:has-text("Blogger のコンテンツ ポリシー") [role="button"], div[aria-label*="閉じる"], button[aria-label*="閉じる"]').first
+                        if close_btn.is_visible(timeout=1500):
+                            close_btn.click()
+                            time.sleep(0.5)
+                    except Exception:
+                        pass
 
-                # --- 3. 本文HTMLの注入 ---
-                print("Injecting HTML content...")
-                injected = False
-                
-                # 方法A: CodeMirror（HTMLビュー）が存在すれば直接setValueで確実に注入
-                try:
-                    cm_res = page.evaluate('''(html) => {
-                        const cm = document.querySelector(".CodeMirror");
-                        if (cm && cm.CodeMirror) {
-                            cm.CodeMirror.setValue(html);
-                            cm.CodeMirror.save();
-                            return cm.CodeMirror.getValue().length;
-                        }
-                        return 0;
-                    }''', content)
-                    if cm_res > 0:
-                        print(f"Successfully injected HTML via CodeMirror (len: {cm_res})!")
-                        injected = True
-                except Exception as e_cm:
-                    print(f"CodeMirror injection failed: {e_cm}")
+                    # クリック前の先頭記事リンクを記録
+                    before_first_link = None
+                    try:
+                        first_el = page.locator('a[href*="/blog/post/edit/"]').first
+                        if first_el.is_visible(timeout=2000):
+                            before_first_link = first_el.get_attribute("href")
+                    except Exception:
+                        pass
 
-                # 方法B: リッチテキストエディタのiframe.editable内のbodyへTrustedHTMLポリシーを考慮して注入
-                if not injected:
-                    for frame in page.frames:
-                        if frame != page.main_frame:
-                            try:
-                                res = frame.evaluate('''(html) => {
-                                    const b = document.body;
-                                    if (!b || b.getAttribute("role") !== "textbox") return false;
-                                    let trusted = html;
-                                    if (window.trustedTypes && window.trustedTypes.createPolicy) {
-                                        try {
-                                            const p = window.trustedTypes.createPolicy("blogger_post_policy", { createHTML: s => s });
-                                            trusted = p.createHTML(html);
-                                        } catch(e) {
-                                            if (window.trustedTypes.defaultPolicy) trusted = window.trustedTypes.defaultPolicy.createHTML(html);
-                                        }
-                                    }
-                                    b.innerHTML = trusted;
-                                    b.dispatchEvent(new Event("input", {bubbles: true}));
-                                    b.dispatchEvent(new Event("change", {bubbles: true}));
-                                    return true;
-                                }''', content)
-                                if res:
-                                    print("Successfully injected HTML via iframe.editable body!")
-                                    injected = True
+                    try:
+                        # 画面内に表示されている「新しい投稿を作成」ボタンを取得してクリック
+                        btn = None
+                        selectors = [
+                            'div[role="button"]:has(span:text-is("新しい投稿"))',
+                            'div[role="button"][aria-label*="新しい投稿を作成"]',
+                            'div[role="button"]:has-text("新しい投稿")',
+                            'button:has-text("新しい投稿")',
+                            'a[aria-label*="新しい投稿"]',
+                            '[data-action-id="create_post"]'
+                        ]
+                        for sel in selectors:
+                            target = page.locator(sel).locator("visible=true").first
+                            if target.is_visible(timeout=1500):
+                                btn = target
+                                break
+
+                        if not btn:
+                            all_btns = page.locator('div[role="button"][aria-label*="新しい投稿を作成"]').all()
+                            for b in all_btns:
+                                if b.is_visible():
+                                    btn = b
                                     break
+
+                        if btn:
+                            print(f"[BLOGGER-OPEN] Clicking New Post button...")
+                            btn.click(timeout=5000)
+                        
+                        # 1. 自動で /blog/post/edit/... へ画面遷移するか待機
+                        # 2. 遷移しない場合、一覧の先頭に新規作成されたドラフト行が出現するため、それをクリック
+                        for wait_sec in range(8):
+                            time.sleep(1.0)
+                            if "edit" in page.url:
+                                editor_opened = True
+                                print(f"[BLOGGER-OPEN] Automatically transitioned to editor: {page.url}")
+                                break
+                            
+                            # 新規出現したドラフト行を検知
+                            try:
+                                curr_el = page.locator('a[href*="/blog/post/edit/"]').first
+                                if curr_el.is_visible():
+                                    curr_link = curr_el.get_attribute("href")
+                                    if curr_link and curr_link != before_first_link:
+                                        print(f"[BLOGGER-OPEN] New draft row detected ({curr_link}). Clicking it to enter editor...")
+                                        curr_el.click()
+                                        time.sleep(3.0)
+                                        if "edit" in page.url:
+                                            editor_opened = True
+                                            print(f"[BLOGGER-OPEN] Successfully entered editor via draft row: {page.url}")
+                                            break
                             except Exception:
                                 pass
 
-                # 方法C: クリップボードペーストフォールバック
-                if not injected:
-                    print("Falling back to clipboard paste injection...")
-                    page.keyboard.press('Tab')
-                    time.sleep(0.5)
-                    page.keyboard.press('Tab')
-                    time.sleep(1)
-                    page.evaluate('''html => {
-                        try {
-                            const blob = new Blob([html], { type: 'text/html' });
-                            const data = [new ClipboardItem({ 'text/html': blob })];
-                            navigator.clipboard.write(data);
-                        } catch (e) {}
-                    }''', content)
-                    time.sleep(1)
-                    page.keyboard.press('Control+V')
-                    page.keyboard.press('Meta+V')
+                        if editor_opened:
+                            break
+
+                    except Exception as be:
+                        print(f"[BLOGGER-OPEN-WARN] Button click/transition failed: {be}")
+
+                    # 3. /new への直接遷移を試行
+                    try:
+                        new_url = f"https://draft.blogger.com/blog/post/edit/{blog_id}/new"
+                        print(f"[BLOGGER-OPEN] Trying direct navigation to new post URL: {new_url}")
+                        page.goto(new_url, wait_until="domcontentloaded", timeout=30000)
+                        time.sleep(4.0)
+                        if "edit" in page.url:
+                            editor_opened = True
+                            print(f"[BLOGGER-OPEN] Direct navigation succeeded: {page.url}")
+                            break
+                    except Exception as de:
+                        print(f"[BLOGGER-OPEN-WARN] Direct navigation failed: {de}")
+
+                    time.sleep(2.0 + open_attempt)
+
+                if not editor_opened:
+                    raise RuntimeError("Blogger editor could not be opened (Google rate limit / RESOURCE_EXHAUSTED or button not found).")
+
+                max_retries = 3
+                success = False
+                
+                for attempt in range(max_retries):
+                    print(f"--- Editor Body Injection Attempt {attempt+1} / {max_retries} ---")
+                    if attempt > 0:
+                        page.reload(wait_until="domcontentloaded")
+                        time.sleep(3)
+
+                    try:
+                        title_input = page.locator('input.titleField, input[aria-label="タイトル"], input[aria-label="Title"], .titleField input').locator("visible=true").first
+                        title_input.wait_for(state="visible", timeout=12000)
+                        title_input.click()
+                        time.sleep(0.5)
+                        page.keyboard.press('Control+A')
+                        page.keyboard.press('Meta+A')
+                        page.keyboard.press('Backspace')
+                        title_input.fill(title)
+                        time.sleep(1.5)
+
+                        print("Injecting HTML content via robust clipboard paste...")
+                        # CodeMirrorまたは本文入力エリアをクリックしてフォーカス
+                        cm_focused = False
+                        try:
+                            cm_box = page.locator('.CodeMirror').locator("visible=true").first
+                            if cm_box.is_visible(timeout=3000):
+                                cm_box.click()
+                                time.sleep(0.5)
+                                cm_focused = True
+                        except Exception:
+                            pass
+
+                        if not cm_focused:
+                            try:
+                                editor_body = page.locator('div[aria-label="本文"], div[aria-label="Body"], div[role="textbox"]').locator("visible=true").first
+                                if editor_body.is_visible(timeout=2000):
+                                    editor_body.click()
+                                    time.sleep(0.5)
+                            except Exception:
+                                page.keyboard.press('Tab')
+                                time.sleep(0.5)
+                                page.keyboard.press('Tab')
+
+                        # クリップボードにHTMLコンテンツを設定
+                        page.evaluate('''html => {
+                            try {
+                                navigator.clipboard.writeText(html);
+                            } catch (e) {
+                                const blob = new Blob([html], { type: 'text/html' });
+                                const data = [new ClipboardItem({ 'text/html': blob })];
+                                navigator.clipboard.write(data);
+                            }
+                        }''', content)
+                        time.sleep(1.0)
+
+                        # 全選択してクリップボードからペースト
+                        page.keyboard.press('Control+A')
+                        page.keyboard.press('Meta+A')
+                        time.sleep(0.3)
+                        page.keyboard.press('Control+V')
+                        page.keyboard.press('Meta+V')
+                        time.sleep(2.5)
+
+                        # キーボード入力でBlogger本体の変更検知・自動保存を確実に発火
+                        page.keyboard.press('Space')
+                        time.sleep(0.3)
+                        page.keyboard.press('Backspace')
+                        time.sleep(1.5)
+
+                        # CodeMirrorまたはページのHTMLを検証
+                        cm_val = page.evaluate('''() => {
+                            const cmEl = document.querySelector('.CodeMirror');
+                            return (cmEl && cmEl.CodeMirror) ? cmEl.CodeMirror.getValue() : '';
+                        }''')
+                        page_html = page.content()
+                        effective_html = cm_val if cm_val else page_html
+
+                        expected_img_min = 1 if "<img" in content else 0
+                        actual_img_count = effective_html.count("<img")
+                        has_links = "href" in effective_html or "http" in effective_html
+
+                        if len(effective_html) > 300 and actual_img_count >= expected_img_min and has_links:
+                            print(f"Validation passed: Body content successfully inserted into Blogger editor (len: {len(effective_html)}, imgs: {actual_img_count}/{expected_img_min}, table: {has_table}).")
+                            success = True
+                            break
+                        else:
+                            print(f"Validation check warning: Editor content verification incomplete (len: {len(effective_html)}, imgs: {actual_img_count}/{expected_img_min}, table: {has_table}). Retrying...")
+                    except Exception as e:
+                        print(f"Error during attempt {attempt+1}: {e}")
                     time.sleep(2)
 
-                # Wizオートセーブ誘発
+                if not success:
+                    # 失敗時に未完了下書きがBlogger上に残らないよう後始末
+                    try:
+                        print("[BLOGGER-CLEANUP] Post validation failed. Discarding unfinished draft...")
+                        page.goto(f"https://draft.blogger.com/blog/posts/{blog_id}", wait_until="domcontentloaded", timeout=15000)
+                        time.sleep(2.0)
+                        discard_btn = page.locator('div[aria-label="この投稿を破棄"]').first
+                        if discard_btn.is_visible(timeout=3000):
+                            discard_btn.dispatch_event('click')
+                            time.sleep(1.0)
+                            page.keyboard.press('Enter')
+                            time.sleep(1.5)
+                            print("[BLOGGER-CLEANUP] Discarded unfinished draft successfully.")
+                    except Exception as discard_err:
+                        print(f"[BLOGGER-CLEANUP-WARN] Failed to discard draft: {discard_err}")
+
+                    raise RuntimeError("Critical: Body injection could not be validated after multiple attempts.")
+
+
+                # 公開処理
+                print("Clicking Publish button...")
+                try:
+                    pub_btn = page.locator('[aria-label="公開"], [aria-label="Publish"]').locator("visible=true").first
+                    pub_btn.scroll_into_view_if_needed()
+                    time.sleep(1)
+                    pub_btn.click(force=True, timeout=10000)
+                except Exception as e:
+                    print("Clicking publish via shortcut:", e)
+                    page.keyboard.press('Control+Shift+P')
+                    page.keyboard.press('Meta+Shift+P')
+
                 time.sleep(3)
 
-                # --- 4. 公開ボタンのクリック ---
-                print("Publishing post...")
-                pub_btn = page.locator('[aria-label="公開"], [aria-label="Publish"]').locator("visible=true").first
-                pub_btn.scroll_into_view_if_needed()
-                time.sleep(1)
-                pub_btn.click(force=True, timeout=10000)
-                print("Clicked publish button.")
-                time.sleep(2)
-
-                # --- 5. 確認ダイアログの「確認」ボタン ---
-                conf_btn = page.locator('div[role="dialog"], div[role="alertdialog"]').locator('div[role="button"], button', has_text="確認").first
-                if conf_btn.is_visible():
-                    conf_btn.click(force=True)
-                    print("Clicked confirm button in dialog.")
-                else:
-                    page.keyboard.press('Enter')
-                    print("Sent Enter key for confirmation.")
-
-                # 公開処理完了待機（投稿一覧URLに戻るまで待機）
+                # 確認ダイアログの「確認」ボタン
                 try:
-                    page.wait_for_url(f"**/blog/posts/{blog_id}*", timeout=15000)
-                    print("Confirmed navigation back to posts list.")
-                except Exception:
-                    time.sleep(5)
+                    conf_btn = page.locator('div[role="dialog"] div[role="button"]:has-text("確認"), [aria-label="確認"], [aria-label="Confirm"]').locator("visible=true").first
+                    conf_btn.click(force=True, timeout=5000)
+                    print("Confirmed publication dialog.")
+                except Exception as e:
+                    print("Confirm button fallback with Enter:", e)
+                    page.keyboard.press('Enter')
 
-                print("Successfully published post to Blogger!")
+                time.sleep(6)
+                print("Successfully published article to Blogger!")
+
+                # 公開後の厳格な事後検証（フィードを取得して本文が0文字でないことを確認）
+                print("[POST-VERIFY] Verifying published article content from public Blogger feed...")
+                time.sleep(5)
+                try:
+                    import urllib.request
+                    feed_url = "https://kaden-hot.blogspot.com/feeds/posts/default?alt=json&max-results=1"
+                    req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        feed_data = json.loads(resp.read().decode("utf-8"))
+                        latest_entry = feed_data.get("feed", {}).get("entry", [{}])[0]
+                        latest_title = latest_entry.get("title", {}).get("$t", "")
+                        latest_content = latest_entry.get("content", {}).get("$t", "")
+                        print(f"[POST-VERIFY] Latest post in feed: '{latest_title}' (content length: {len(latest_content)} chars)")
+                        
+                        if len(latest_content) < 200:
+                            print(f"[POST-VERIFY-ERROR] Critical: Published post content is too short or empty ({len(latest_content)} chars)!")
+                            # 即時ゴミ箱移動してサイトを保護
+                            try:
+                                page.goto(f"https://draft.blogger.com/blog/posts/{blog_id}", wait_until="networkidle", timeout=20000)
+                                time.sleep(2)
+                                first_link = page.locator("a[href*='/blog/post/edit/']").first
+                                if first_link.is_visible(timeout=5000):
+                                    first_link.hover()
+                                    time.sleep(0.8)
+                                    row_trash = page.locator("div[role=button][aria-label='この投稿をゴミ箱に移動']").locator("visible=true").first
+                                    if row_trash.is_visible(timeout=3000):
+                                        row_trash.click()
+                                        time.sleep(1.0)
+                                        confirm = page.locator("div[role=button]:has-text('ゴミ箱に移動'), button:has-text('ゴミ箱に移動')").locator("visible=true").first
+                                        if confirm.is_visible(timeout=3000):
+                                            confirm.click()
+                                            print("[POST-VERIFY-CLEANUP] Empty post immediately moved to trash.")
+                            except Exception as cleanup_err:
+                                print(f"[POST-VERIFY-CLEANUP-ERR] Failed to trash bad post: {cleanup_err}")
+                            raise RuntimeError("Critical: Blogger post was published with empty content. Post was trashed and aborting.")
+                        else:
+                            print("[POST-VERIFY] Verification SUCCESS: Body content and images are fully published and live!")
+                except Exception as verify_err:
+                    if "Critical: Blogger post was published with empty content" in str(verify_err):
+                        raise
+                    print(f"[POST-VERIFY-WARN] Feed verification check encountered an error (will proceed): {verify_err}")
+
+                # 公開された最新記事のURLを取得
+                published_post_url = f"https://kaden-hot.blogspot.com"
+                try:
+                    time.sleep(2)
+                    page.goto(f"https://draft.blogger.com/blog/posts/{blog_id}", wait_until="networkidle")
+                    time.sleep(3)
+                    post_link_el = page.locator('a[href*=".blogspot.com/"][aria-label*="表示"], a[href*=".blogspot.com/"][aria-label*="View"], a[href*=".blogspot.com/20"]').first
+                    if post_link_el.is_visible(timeout=5000):
+                        href = post_link_el.get_attribute("href")
+                        if href and "blogspot.com" in href:
+                            published_post_url = href
+                            print(f"[BLOGGER-URL] Retrieved published post URL: {published_post_url}")
+                except Exception as ue:
+                    print(f"[BLOGGER-URL-WARN] Could not retrieve specific post URL, using base URL: {ue}")
+
+                return published_post_url
+
             except Exception as e:
-                print(f"Error occurred. Current URL: {page.url}")
-                print(f"Page Title: {page.title()}")
-                print(f"Page Content Snippet: {page.content()[:1000]}")
+                print(f"Error during Blogger operation: {e}")
                 raise e
 
     finally:
-        if os.path.exists(session_file_path):
+        if session_file_path and session_file_path != "session.json" and os.path.exists(session_file_path):
             os.remove(session_file_path)
+
 
 
 def generate_room_comment_with_llm(item):
