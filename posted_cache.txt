@@ -103,3 +103,4 @@ laox:10071437
 shopkurano:10013489
 roomy:10015625
 roomy:10016068
+uniqdirect:10001990
