@@ -112,3 +112,4 @@ zeeflea:10000033
 mitsuki-shop-online:10005572
 kuresonstore:10020994
 worldinterior:10080344
+dasimon:10000004
