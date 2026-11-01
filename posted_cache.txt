@@ -110,3 +110,4 @@ irisplaza-r:10133208
 corsage:10001438
 zeeflea:10000033
 mitsuki-shop-online:10005572
+kuresonstore:10020994
