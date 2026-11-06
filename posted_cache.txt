@@ -133,3 +133,4 @@ leacco8:10000019
 iremono:10000089
 zian:10000038
 irisplaza-r:10158186
+soppy:10000292
