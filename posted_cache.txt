@@ -146,3 +146,4 @@ storeishimaru:10027280
 ohama-shop:10008081
 reveland:10012660
 fukuroyuri:10000155
+little-polynesian:10008110
