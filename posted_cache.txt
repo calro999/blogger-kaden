@@ -147,3 +147,4 @@ ohama-shop:10008081
 reveland:10012660
 fukuroyuri:10000155
 little-polynesian:10008110
+d-start:10010937
