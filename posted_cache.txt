@@ -153,3 +153,4 @@ sunshine-store:10000543
 reiwa-cosme:10000670
 soppy:10000304
 lutella:10022038
+kagustyle:10039484
