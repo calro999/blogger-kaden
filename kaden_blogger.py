@@ -267,73 +267,114 @@ def fetch_rakuten_item():
         "靴乾燥機 脱臭 コンパクト ダブルノズル"
     ]
 
-    # 直近選ばれたキーワードを回避（最低15件の履歴と被らないようにローテーション）
-    recent_kw = load_recent_themes(limit=15)
-    candidate_kws = [k for k in keywords_pool if k not in recent_kw]
-    if not candidate_kws:
-        recent_kw_short = load_recent_themes(limit=5)
-        candidate_kws = [k for k in keywords_pool if k not in recent_kw_short] or keywords_pool
-
-    keyword = random.choice(candidate_kws)
-    print(f"Selected Keyword for Search: '{keyword}'")
-
-    url = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401"
-    params = {
-        "applicationId": app_id,
-        "accessKey": access_key,
-        "keyword": keyword,
-        "format": "json",
-        "hits": 30
-    }
-    if affiliate_id:
-        params["affiliateId"] = affiliate_id
-
-    response = requests.get(url, params=params, timeout=20)
-    data = response.json() if response.status_code == 200 else {}
-    items = data.get("Items", [])
-    if not items:
-        simplified = keyword.split()[0]
-        params["keyword"] = simplified
-        resp2 = requests.get(url, params=params, timeout=20)
-        items = resp2.json().get("Items", []) if resp2.status_code == 200 else []
-
-    if not items:
-        raise RuntimeError(f"No items found for keyword: {keyword}")
-
     posted_cache = load_posted_cache()
     past_titles = load_posted_titles()
-    
-    # 過去商品名・タイトルとの類似チェック
-    for item_wrapper in items:
-        item = item_wrapper.get("Item", {})
-        item_code = item.get("itemCode")
-        name = item.get("itemName", "")
-        if any(ng in name for ng in ["リサイクル券", "回収", "利用券", "チケット", "処分", "修理", "中古", "訳あり"]):
+    recent_kw = load_recent_themes(limit=15)
+
+    # 直近選ばれたキーワードを優先度下げて並べ替え（シャッフル巡回）
+    candidate_kws = [k for k in keywords_pool if k not in recent_kw]
+    random.shuffle(candidate_kws)
+    fallback_kws = [k for k in keywords_pool if k in recent_kw]
+    random.shuffle(fallback_kws)
+    search_queue = candidate_kws + fallback_kws
+
+    url = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401"
+
+    # キーワードを順番に試し、未投稿かつ非重複の商品が見つかるまで粘り強く探索（最大10キーワード巡回）
+    for kw_idx, keyword in enumerate(search_queue[:10]):
+        print(f"[Attempt {kw_idx+1}/10] Searching Rakuten for keyword: '{keyword}'...")
+        params = {
+            "applicationId": app_id,
+            "accessKey": access_key,
+            "keyword": keyword,
+            "format": "json",
+            "hits": 30
+        }
+        if affiliate_id:
+            params["affiliateId"] = affiliate_id
+
+        try:
+            response = requests.get(url, params=params, timeout=20)
+            data = response.json() if response.status_code == 200 else {}
+            items = data.get("Items", [])
+            
+            # 0件の場合はキーワード単語を分解して広域検索
+            if not items and len(keyword.split()) > 1:
+                params["keyword"] = keyword.split()[0]
+                resp2 = requests.get(url, params=params, timeout=20)
+                items = resp2.json().get("Items", []) if resp2.status_code == 200 else []
+
+            if not items:
+                continue
+
+            # 1. 理想パターン：過去タイトルとも被らず、未投稿の商品
+            for item_wrapper in items:
+                item = item_wrapper.get("Item", {})
+                item_code = item.get("itemCode")
+                name = item.get("itemName", "")
+                if any(ng in name for ng in ["リサイクル券", "回収", "利用券", "チケット", "処分", "修理", "中古", "訳あり"]):
+                    continue
+                if not item_code or item_code in posted_cache:
+                    continue
+
+                clean_name = clean_rakuten_item_name(name)
+                clean_comp = re.sub(r"""[\s\d月【】選！!｜|：:・\-\[\]（）()]+""", '', clean_name)
+                is_item_dup = False
+                for pt in past_titles[-50:]:
+                    pt_clean = re.sub(r"""[\s\d月【】選！!｜|：:・\-\[\]（）()]+""", '', pt)
+                    if len(clean_comp) >= 6 and clean_comp[:8] in pt_clean:
+                        is_item_dup = True
+                        break
+                if is_item_dup:
+                    continue
+
+                save_recent_theme(keyword)
+                print(f"Found ideal unposted & non-duplicate item: {clean_name[:25]}")
+                return item
+
+            # 2. セカンド候補：過去タイトルとは多少語句がかすっても、itemCode未投稿の商品（更新を止めないための安全弁）
+            for item_wrapper in items:
+                item = item_wrapper.get("Item", {})
+                item_code = item.get("itemCode")
+                name = item.get("itemName", "")
+                if any(ng in name for ng in ["リサイクル券", "回収", "利用券", "チケット", "処分", "修理", "中古", "訳あり"]):
+                    continue
+                if item_code and item_code not in posted_cache:
+                    save_recent_theme(keyword)
+                    clean_name = clean_rakuten_item_name(name)
+                    print(f"Found unposted item (fallback): {clean_name[:25]}")
+                    return item
+
+        except Exception as err:
+            print(f"Error fetching for keyword '{keyword}': {err}")
             continue
-        if not item_code or item_code in posted_cache:
-            continue
 
-        clean_name = clean_rakuten_item_name(name)
-        clean_comp = re.sub(r"""[\s\d月【】選！!｜|：:・\-\[\]（）()]+""", '', clean_name)
-        is_item_dup = False
-        for pt in past_titles[-50:]:
-            pt_clean = re.sub(r"""[\s\d月【】選！!｜|：:・\-\[\]（）()]+""", '', pt)
-            if len(clean_comp) >= 6 and clean_comp[:8] in pt_clean:
-                is_item_dup = True
-                break
-        if is_item_dup:
-            continue
+    # 万が一上記全10キーワードでも全て投稿済みだった場合、キーワード指定なし・広域検索で未投稿品を確実に見つける
+    print("[FALLBACK] All 10 keywords exhausted. Performing broad open search to ensure continuous posting...")
+    broad_kws = ["人気", "注目", "ランキング", "便利", "新作"]
+    for b_kw in broad_kws:
+        params = {
+            "applicationId": app_id,
+            "accessKey": access_key,
+            "keyword": f"{cfg['keywords'][0].split()[0]} {b_kw}",
+            "format": "json",
+            "hits": 30
+        }
+        if affiliate_id:
+            params["affiliateId"] = affiliate_id
+        try:
+            r = requests.get(url, params=params, timeout=20)
+            items = r.json().get("Items", []) if r.status_code == 200 else []
+            for item_wrapper in items:
+                item = item_wrapper.get("Item", {})
+                code = item.get("itemCode")
+                if code and code not in posted_cache:
+                    print(f"Broad search found unposted item: {item.get('itemName', '')[:25]}")
+                    return item
+        except Exception:
+            pass
 
-        save_recent_theme(keyword)
-        return item
-
-    for item_wrapper in items:
-        item = item_wrapper.get("Item", {})
-        if item.get("itemCode") and item.get("itemCode") not in posted_cache:
-            save_recent_theme(keyword)
-            return item
-
-    raise RuntimeError("All fetched items for this keyword have already been posted.")
+    raise RuntimeError("Could not find any unposted items across all keyword pools.")
 
 def generate_article_with_llm(item):
     raw_title = item.get("itemName", "")
