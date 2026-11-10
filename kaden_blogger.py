@@ -234,30 +234,48 @@ def fetch_rakuten_item():
     if not app_id or not access_key:
         raise ValueError("RAKUTEN_APP_ID and RAKUTEN_ACCESS_KEY must be set in environment variables.")
 
-    kaden_keywords = [
-        "小型家電 便利グッズ",
-        "小型家電 キッチン 一人暮らし",
-        "コンパクト家電 人気",
-        "卓上加湿器 おしゃれ",
-        "ハンディファン 冷却プレート",
-        "ミニブレンダー スムージー",
-        "コードレス ミニアイロン",
-        "コンパクト ホットプレート 一人用",
-        "ミニ炊飯器 1合",
-        "小型コーヒーメーカー",
-        "毛玉取り器 電動 コードレス",
-        "モバイルバッテリー 急速充電 小型",
-        "ポータブル扇風機 小型",
-        "デスクヒーター 小型 省エネ",
-        "小型サーキュレーター 静音",
-        "ハンディクリーナー 強力吸引 軽量",
-        "電動ミル コーヒー 小型",
-        "小型衣類スチーマー 旅行",
-        "卓上冷風機 静音",
-        "電気ケトル 小型 コンパクト"
+    keywords_pool = [
+        "スマート加湿器 卓上 アロマ",
+        "小型コーヒーグラインダー 静音",
+        "一人暮らし ミニ炊飯器 糖質カット",
+        "コンパクトホットプレート たこ焼き",
+        "ハンディクリーナー 車載 強力吸引",
+        "コードレス ミニヘアアイロン 充電式",
+        "デスクパネルヒーター 省エネ",
+        "超音波洗浄機 メガネ 時計",
+        "小型脱臭機 オゾン ペット",
+        "電動ミル ソルト ペッパー 岩塩",
+        "卓上食洗機 タンク式 工事不要",
+        "ミニブレンダー スムージー 持ち運び",
+        "スマート体重計 体組成計 スマホ連動",
+        "小型サーキュレーター 3D首振り",
+        "衣類スチーマー 立ち上がり早い 軽量",
+        "ポータブル電源 小型 キャンプ 防災",
+        "電気ケトル 温度調節 保温 細口",
+        "毛玉取り器 電動 6枚刃 USB充電",
+        "ネッククーラー 冷却プレート 静音",
+        "布団乾燥機 コンパクト 靴乾燥",
+        "スマートプラグ タイマー 遠隔操作",
+        "温湿度計 デジタル 高精度 アラーム",
+        "卓上冷風扇 小型 USB給電",
+        "エアーフライヤー ノンフライヤー 小型",
+        "ホットサンドメーカー 電気 耳まで焼ける",
+        "ミニプロジェクター 小型 モバイル",
+        "電子メモパッド カラー 手書き",
+        "LEDデスクライト 調光調色 目に優しい",
+        "モバイルバッテリー MagSafe ワイヤレス急速充電",
+        "靴乾燥機 脱臭 コンパクト ダブルノズル"
     ]
-    keyword = random.choice(kaden_keywords)
-    print(f"Searching Rakuten for keyword: {keyword}")
+
+    # 直近選ばれたキーワードを回避（最低15件の履歴と被らないようにローテーション）
+    recent_kw = load_recent_themes(limit=15)
+    candidate_kws = [k for k in keywords_pool if k not in recent_kw]
+    if not candidate_kws:
+        recent_kw_short = load_recent_themes(limit=5)
+        candidate_kws = [k for k in keywords_pool if k not in recent_kw_short] or keywords_pool
+
+    keyword = random.choice(candidate_kws)
+    print(f"Selected Keyword for Search: '{keyword}'")
 
     url = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401"
     params = {
@@ -270,26 +288,52 @@ def fetch_rakuten_item():
     if affiliate_id:
         params["affiliateId"] = affiliate_id
 
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        raise RuntimeError(f"Failed to fetch from Rakuten API: {response.status_code} - {response.text}")
-
-    data = response.json()
+    response = requests.get(url, params=params, timeout=20)
+    data = response.json() if response.status_code == 200 else {}
     items = data.get("Items", [])
+    if not items:
+        simplified = keyword.split()[0]
+        params["keyword"] = simplified
+        resp2 = requests.get(url, params=params, timeout=20)
+        items = resp2.json().get("Items", []) if resp2.status_code == 200 else []
+
     if not items:
         raise RuntimeError(f"No items found for keyword: {keyword}")
 
     posted_cache = load_posted_cache()
+    past_titles = load_posted_titles()
+    
+    # 過去商品名・タイトルとの類似チェック
     for item_wrapper in items:
         item = item_wrapper.get("Item", {})
         item_code = item.get("itemCode")
         name = item.get("itemName", "")
-        if any(ng in name for ng in ["リサイクル券", "回収", "利用券", "チケット", "処分", "修理"]):
+        if any(ng in name for ng in ["リサイクル券", "回収", "利用券", "チケット", "処分", "修理", "中古", "訳あり"]):
             continue
-        if item_code and item_code not in posted_cache:
+        if not item_code or item_code in posted_cache:
+            continue
+
+        clean_name = clean_rakuten_item_name(name)
+        clean_comp = re.sub(r"""[\s\d月【】選！!｜|：:・\-\[\]（）()]+""", '', clean_name)
+        is_item_dup = False
+        for pt in past_titles[-50:]:
+            pt_clean = re.sub(r"""[\s\d月【】選！!｜|：:・\-\[\]（）()]+""", '', pt)
+            if len(clean_comp) >= 6 and clean_comp[:8] in pt_clean:
+                is_item_dup = True
+                break
+        if is_item_dup:
+            continue
+
+        save_recent_theme(keyword)
+        return item
+
+    for item_wrapper in items:
+        item = item_wrapper.get("Item", {})
+        if item.get("itemCode") and item.get("itemCode") not in posted_cache:
+            save_recent_theme(keyword)
             return item
 
-    raise RuntimeError("All fetched items have already been posted.")
+    raise RuntimeError("All fetched items for this keyword have already been posted.")
 
 def generate_article_with_llm(item):
     raw_title = item.get("itemName", "")
@@ -317,30 +361,66 @@ def generate_article_with_llm(item):
         f'🛒 楽天市場で価格・在庫を見る</a></div>'
     )
 
-    prompt = f"""以下の小型家電・生活便利家電の情報を基にして、読者が欲しくなる魅力的なブログ記事のタイトルとHTML本文を生成してください。
-【商品名（整形済み）】: {title}
-【元の商品情報】: {raw_title[:150]}
-【価格】: {price}円
-【商品説明】: {caption[:300]}
-【商品画像URL】: {image_url}
-【アフィリエイトURL】: {url}
+    past_titles = load_posted_titles()[-50:]
+    past_titles_str = "\n".join([f"- {t}" for t in past_titles]) if past_titles else "（過去の重複なし）"
 
-以下の要件を厳格に遵守してください：
-1. 出力は以下のJSONフォーマットのみとしてください。他のテキストは一切含めないでください。
-{{
-    "title": "ここにキャッチーで魅力的なタイトル（商品名の単なる羅列は禁止、最大35文字）",
-    "html": "ここに純粋なHTML本文"
-}}
-2. HTML本文の構成：
-   - 記事全体を `<div class="article-wrapper">` と `</div>` で囲む
-   - 商品の魅力的な説明（`<div class="content-body">` と `</div>` で囲む）
-   - おすすめ注目ポイント3選（`<ul class="points-list">` と `<li>` タグを使用）
-   - 商品の画像（`<img src="{image_url}" alt="{title}" style="max-width: 100%; height: auto;">`）
+    title_angles = [
+        "【本音・実用レビュー型】実際に日常で使って分かった真価や使い勝手をストレートに提示",
+        "【悩み解決・ビフォーアフター型】「〇〇で困っていた人に」など痛みの解消を前面に提示",
+        "【構造・こだわりスペック型】素材、機能、独自設計などのスペック価値にフォーカス",
+        "【生活シーン想起型】日常の特定のワンシーン（朝の準備、作業中、くつろぎ時間等）を切り取る",
+        "【差別化・選ばれる理由型】類似品と何が決定的に違うのか、独自の強みを明確にする"
+    ]
+    chosen_angle = random.choice(title_angles)
+
+    prompt = f"""以下は楽天市場から厳選した小型家電・スマート家電・暮らしの便利ガジェットのアイテムデータです。
+Google検索・読者双方から最高品質の一次情報レビューとして高く評価されるよう、独自性と専門性に溢れる独立したブログ記事（タイトル＋完全HTML本文）を執筆してください。
+
+【商品データ】:
+- 商品名（整形済み）: {title}
+- 元の商品名情報: {raw_title[:150]}
+- 参考価格: {price}円
+- 商品説明概要: {caption[:350]}
+- 商品画像URL: {image_url}
+- アフィリエイトURL: {url}
+
+【今回のタイトル推奨切り口】: {chosen_angle}
+
+【過去に投稿した直近のタイトル一覧（これらと構文・出だし・キーワードの並びが酷似するものは【絶対禁止】）】:
+{past_titles_str}
+
+【絶対厳守の独自性・品質要件】:
+1. タイトル（title）:
+   - 30〜42文字程度。過去タイトルと絶対に被らない、商品固有の魅力を引き出したオリジナルタイトル。
+   - 「鏡を見る〜」「失敗しない〜」「徹底解説」「完全ガイド」「注目のアイテム」「おすすめ」などの安易な陳腐フレーズは完全使用禁止。
+   - 商品名の単なる羅列やコピペは禁止。読者の好奇心や購入意欲を刺激する言葉を選ぶこと。
+2. 本文HTML（html）:
+   - 全体を `<div class="article-content" style="line-height: 1.85; color: #2d3748; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">` で囲む。
+   - 導入部:
+     - 読者が日常で直面する疑問や関心に寄り添い、なぜ今この商品が選ばれているのか、背景や魅力を300文字程度で自然に導入。
+     - 「いかがでしたでしょうか」などの定型文は使わない。
+   - 商品画像表示: {f'<div style="text-align: center; margin: 24px 0;"><img src="{image_url}" alt="{title}" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);"></div>' if image_url else ""}
+   - 本文セクション:
+     - 単なるスペック紹介ではなく、実際の使い心地、他と差がつくこだわり設計、手にしたときのリアルな感覚を具体的に描写。
+     - 適宜 `<h3>` 小見出しを用いて読みやすく構造化。
+   - 独自のチェックポイント / メリット・注意点:
+     - 購入前に知っておくべきポイントを3〜4項目、`<ul>` と `<li>` で箇条書き。
    - 購入ボタンHTML: {buy_button_html}
-3. 【厳禁事項】: Amazon, Yahoo, 他社ECサイトなどのリンクや名称は絶対に含めないでください。
-"""
+   - まとめセクション:
+     - どんな人におすすめできるかを端的に総括し、前向きな後押しをして結ぶ。
+3. 他社EC（Amazon, Yahoo等）の名称やリンクは一切含めないこと。
 
-    system_message = "あなたは暮らしを豊かにする小型家電・ガジェット専門のレビューブロガーです。指示された仕様に完全に従い、JSONフォーマットのみで出力します。"
+【出力形式】:
+以下のJSONフォーマットのみを出力してください（Markdownコードブロックで囲むこと）:
+```json
+{{
+    "title": "生成したオリジナルタイトル",
+    "html": "生成した完全なHTML本文"
+}}
+```
+"""
+    system_message = "あなたは日々の暮らしを快適にするスマート家電・生活家電専門のテクニカルライター兼編集者です。実用性と専門性の高い独立レビュー記事を執筆します。"
+
 
     def parse_json_response(text):
         import json as _json
@@ -1158,61 +1238,70 @@ def post_to_rakuten_room(item_code, comment):
 
 def main():
     try:
-        # 1. 楽天から商品取得
-        item = fetch_rakuten_item()
-        item_code = item.get("itemCode")
-        title = item.get("itemName")
-        print(f"Selected Item: {title} ({item_code})")
+        max_attempts = 5
+        final_item = None
+        final_title = None
+        final_html = None
 
-        # 2. LLMで記事生成
-        llm_result = generate_article_with_llm(item)
-        if isinstance(llm_result, dict):
-            gen_title = llm_result.get("title", title[:30])
-            html_content = llm_result.get("html", "")
-        else:
-            gen_title = title[:30]
-            html_content = str(llm_result)
-            
-        if not html_content or len(html_content) < 10:
-            # AIが失敗した時の絶対的なフォールバックHTML
-            image_url = item.get("mediumImageUrls", [{"imageUrl": ""}])[0].get("imageUrl", "") if item.get("mediumImageUrls") else ""
-            html_content = f'<h2>{gen_title}</h2><br><br><img src="{image_url}" alt="商品画像" style="max-width: 100%; height: auto;"><br><br><a href="https://room.rakuten.co.jp/jack555/items" target="_blank">✅ 私の楽天ROOMはこちら</a>'
+        for attempt in range(max_attempts):
+            print(f"=== Content Selection & Generation Attempt {attempt + 1} / {max_attempts} ===")
+            item = fetch_rakuten_item()
+            item_code = item.get("itemCode")
+            raw_title = item.get("itemName", "")
+            print(f"Selected Item Candidate: {raw_title[:30]} ({item_code})")
 
-        # 誤字脱字最終チェックとSEO, AI-SEO, GEO的な修正ブラッシュアップ工程
-        html_content = proofread_and_optimize_blogger_article(gen_title, html_content)
-        # 途中切れ（力尽きる現象）防止・補正工程
-        html_content = ensure_complete_blogger_article(html_content)
-            
+            llm_result = generate_article_with_llm(item)
+            if isinstance(llm_result, dict):
+                gen_title = llm_result.get("title", "")
+                html_content = llm_result.get("html", "")
+            else:
+                gen_title = ""
+                html_content = str(llm_result)
+
+            if not gen_title:
+                gen_title = clean_rakuten_item_name(raw_title)[:32]
+
+            # 厳格なタイトル重複・スパム・構文被り検証
+            is_dup, dup_match, ratio = is_title_duplicate_or_similar(gen_title)
+            if is_dup:
+                print(f"[REJECTED] Generated title or product too similar to past content ({dup_match}, ratio={ratio:.2f}): {gen_title}")
+                print("Discarding this item candidate completely and picking a fresh keyword/item...")
+                continue
+
+            if not html_content or len(html_content.strip()) < 300:
+                print(f"[REJECTED] Generated HTML content is too short ({len(html_content) if html_content else 0} chars). Retrying...")
+                continue
+
+            html_content = proofread_and_optimize_blogger_article(gen_title, html_content)
+            html_content = ensure_complete_blogger_article(html_content)
+
+            final_item = item
+            final_title = gen_title
+            final_html = html_content
+            print(f"[APPROVED] Quality & Uniqueness Verified: {final_title}")
+            break
+
+        if not final_item or not final_title or not final_html:
+            raise RuntimeError("Failed to generate a 100% unique, non-duplicated article after multiple attempts.")
+
         print("--- Generated HTML Content Snippet ---")
-        print(html_content[:200])
+        print(final_html[:200])
         print("--------------------------------------")
-        
-                # タイトル重複・スパム検証
-        is_dup, dup_match, ratio = is_title_duplicate_or_similar(gen_title)
-        if is_dup:
-            print(f"[WARN] Title duplicated or banned ({dup_match}, ratio={ratio:.2f}): {gen_title}")
-            import random
-            prefixes = ["【注目レビュー】", "【徹底紹介】", "【話題の逸品】", "【暮らしを豊かに】", "【愛用者が選ぶ】"]
-            clean_item_name = clean_rakuten_item_name(title)[:24]
-            gen_title = f"{random.choice(prefixes)}{clean_item_name}"
-            print(f"-> Replaced with unique fallback title: {gen_title}")
 
-        post_to_blogger(gen_title, html_content)
+        post_to_blogger(final_title, final_html)
 
-        # 楽天ROOMへも自動「コレ！」投稿
         try:
-            room_comment = generate_room_comment_with_llm(item)
+            item_code = final_item.get("itemCode")
+            room_comment = generate_room_comment_with_llm(final_item)
             print("Generated ROOM Comment:")
             print(room_comment)
             post_to_rakuten_room(item_code, room_comment)
         except Exception as room_err:
             print(f"Failed to post to Rakuten Room: {room_err}")
 
-        # 4. キャッシュに保存
-        save_to_cache(item_code)
-        save_posted_title(gen_title)
-        save_posted_title(gen_title)
-        print("Process completed successfully.")
+        save_to_cache(final_item.get("itemCode"))
+        save_posted_title(final_title)
+        print("Process completed successfully with 100% unique article.")
 
     except Exception as e:
         print(f"Error in execution: {e}")
