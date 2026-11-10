@@ -9,6 +9,119 @@ from playwright.sync_api import sync_playwright
 
 CACHE_FILE = "posted_cache.txt"
 
+# --- タイトル重複防止 & オリジナリティ保証モジュール ---
+POSTED_TITLES_FILE = "posted_titles.txt"
+RECENT_THEMES_FILE = "recent_themes.txt"
+
+def load_posted_titles():
+    """過去に投稿された記事タイトルの一覧を取得"""
+    if os.path.exists(POSTED_TITLES_FILE):
+        with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
+    return []
+
+def save_posted_title(title):
+    """新規投稿タイトルを永続化保存"""
+    if not title:
+        return
+    title_clean = title.strip()
+    with open(POSTED_TITLES_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{title_clean}\n")
+
+BANNED_TITLE_PHRASES = [
+    "鏡を見る", "鏡の前で", "鏡を見て", "鏡をのぞく", "鏡に映る", "鏡を見るのが", "鏡を見るたび",
+    "失敗しない", "いかがでしたでしょうか", "徹底解説", "完全ガイド", "徹底比較", "後悔しない",
+    "男の清潔感を高めるギア", "注目のアイテム", "おすすめアイテム", "厳選アイテム", "大人気アイテム", "話題のアイテム"
+]
+
+def check_title_banned_phrases(title):
+    """タイトル内に陳腐なテンプレ・スパムフレーズが含まれているかチェック"""
+    if not title:
+        return True, "タイトルが空です"
+    for phrase in BANNED_TITLE_PHRASES:
+        if phrase in title:
+            return True, f"禁止フレーズ「{phrase}」が含まれています"
+    return False, None
+
+def is_title_duplicate_or_similar(new_title, threshold=0.60):
+    """
+    過去のタイトルと完全一致、または類似度が閾値（60%）以上なら重複と判定
+    さらに禁止フレーズや冒頭10文字被りも厳格にブロック
+    """
+    import difflib
+    if not new_title:
+        return True, "空のタイトル", 1.0
+
+    has_banned, banned_reason = check_title_banned_phrases(new_title)
+    if has_banned:
+        return True, banned_reason, 1.0
+
+    existing_titles = load_posted_titles()
+    clean_new = re.sub(r'[\s\d月【】選！!｜|：:・\-\[\]（）()]+', '', new_title)
+    if not clean_new:
+        return True, "無効なタイトル", 1.0
+
+    for past in existing_titles:
+        if new_title.strip() == past.strip():
+            return True, past, 1.0
+
+        if len(new_title) >= 10 and len(past) >= 10:
+            if new_title[:10] == past[:10]:
+                return True, f"冒頭10文字重複（{past[:10]}）: {past}", 0.95
+
+        clean_past = re.sub(r'[\s\d月【】選！!｜|：:・\-\[\]（）()]+', '', past)
+        if not clean_past:
+            continue
+        ratio = difflib.SequenceMatcher(None, clean_new, clean_past).ratio()
+        if ratio >= threshold:
+            return True, past, ratio
+
+    return False, None, 0.0
+
+def load_recent_themes(limit=10):
+    """直近投稿されたテーマ・商品コードを取得"""
+    if os.path.exists(RECENT_THEMES_FILE):
+        with open(RECENT_THEMES_FILE, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+            return lines[-limit:]
+    return []
+
+def save_recent_theme(theme_name):
+    """テーマやキーワードを履歴に保存"""
+    if not theme_name:
+        return
+    with open(RECENT_THEMES_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{theme_name.strip()}\n")
+
+def extract_image_url(item):
+    """楽天APIレスポンスから高画質かつ有効な画像URLを抽出"""
+    if not item:
+        return ""
+    raw_url = ""
+    for key in ["mediumImageUrls", "smallImageUrls"]:
+        imgs = item.get(key, [])
+        if imgs and isinstance(imgs, list):
+            first = imgs[0]
+            if isinstance(first, dict):
+                raw_url = first.get("imageUrl", "") or first.get("url", "")
+            elif isinstance(first, str):
+                raw_url = first
+            if raw_url:
+                break
+    if not raw_url:
+        raw_url = item.get("imageUrl") or ""
+
+    if raw_url:
+        if raw_url.startswith("//"):
+            raw_url = "https:" + raw_url
+        elif raw_url.startswith("http://"):
+            raw_url = "https://" + raw_url[7:]
+        # クエリパラメータ（?_ex=... 等のリサイズ縮小）を除去しオリジナル高解像度URLにする
+        if "?" in raw_url:
+            raw_url = raw_url.split("?")[0]
+    return raw_url
+
+
 
 def click_physical(page, selector):
     import time
@@ -98,14 +211,19 @@ def sanitize_llm_output(content, valid_affiliate_url):
     if not content:
         return ""
     import re
-    url_pattern = r'https?://[^\s"<>\'\)]+'
+    url_pattern = re.compile(r"""https?://[^\s"'<>()]+""")
     def replace_url(match):
         found_url = match.group(0)
+        # 楽天画像ドメインや画像拡張子はアフィリエイトURLに書き換えない（画像の破損防止）
+        if any(dom in found_url for dom in ["thumbnail.image.rakuten.co.jp", "image.rakuten.co.jp", "tshop.r10s.jp"]):
+            return found_url
+        if any(found_url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]):
+            return found_url
         if "room.rakuten.co.jp" in found_url or "hb.afl.rakuten.co.jp" in found_url or ("rakuten.co.jp" in found_url and "affiliateId" in found_url):
             return found_url
         return valid_affiliate_url if valid_affiliate_url else "https://room.rakuten.co.jp/jack555/items"
     
-    sanitized = re.sub(url_pattern, replace_url, content)
+    sanitized = url_pattern.sub(replace_url, content)
     sanitized = sanitized.replace("Amazon", "楽天市場").replace("アマゾン", "楽天市場").replace("ヤフー", "楽天市場").replace("Yahoo!", "楽天市場")
     return sanitized
 
@@ -245,17 +363,15 @@ def generate_article_with_llm(item):
     if gemini_key:
         models = [
             "gemini-2.5-flash",
-            "gemini-2.0-flash",
             "gemini-2.5-flash-lite",
-            "gemini-2.0-flash-lite",
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-3-flash",
             "gemini-2.5-pro",
-            "gemini-3.1-pro"
+            "gemini-3-flash",
+            "gemini-3.1-pro",
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash"
         ]
         for model_name in models:
             try:
@@ -822,17 +938,15 @@ def generate_room_comment_with_llm(item):
     if gemini_key:
         models = [
             "gemini-2.5-flash",
-            "gemini-2.0-flash",
             "gemini-2.5-flash-lite",
-            "gemini-2.0-flash-lite",
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-3-flash",
             "gemini-2.5-pro",
-            "gemini-3.1-pro"
+            "gemini-3-flash",
+            "gemini-3.1-pro",
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash"
         ]
         for model_name in models:
             try:
@@ -1073,6 +1187,16 @@ def main():
         print(html_content[:200])
         print("--------------------------------------")
         
+                # タイトル重複・スパム検証
+        is_dup, dup_match, ratio = is_title_duplicate_or_similar(gen_title)
+        if is_dup:
+            print(f"[WARN] Title duplicated or banned ({dup_match}, ratio={ratio:.2f}): {gen_title}")
+            import random
+            prefixes = ["【注目レビュー】", "【徹底紹介】", "【話題の逸品】", "【暮らしを豊かに】", "【愛用者が選ぶ】"]
+            clean_item_name = clean_rakuten_item_name(title)[:24]
+            gen_title = f"{random.choice(prefixes)}{clean_item_name}"
+            print(f"-> Replaced with unique fallback title: {gen_title}")
+
         post_to_blogger(gen_title, html_content)
 
         # 楽天ROOMへも自動「コレ！」投稿
@@ -1086,6 +1210,8 @@ def main():
 
         # 4. キャッシュに保存
         save_to_cache(item_code)
+        save_posted_title(gen_title)
+        save_posted_title(gen_title)
         print("Process completed successfully.")
 
     except Exception as e:
