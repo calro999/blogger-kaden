@@ -157,3 +157,4 @@ kagustyle:10039484
 e-akari:10060700
 e-sumail-style:10020997
 lieto813:10085304
+zakkashop:10017198
