@@ -163,3 +163,4 @@ baibaiyishop:10008219
 amistad:10001471
 cado-shop:10000070
 e-goods:10011279
+switchbot:10000028
