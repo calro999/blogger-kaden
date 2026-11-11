@@ -165,3 +165,4 @@ cado-shop:10000070
 e-goods:10011279
 switchbot:10000028
 yipintang:10000210
+noalone:10000424
