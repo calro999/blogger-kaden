@@ -171,3 +171,4 @@ ikeike-chest:10008108
 marubi01:10000419
 zozotop:10000508
 enetroom:10151035
+ueno-mono:10000034
