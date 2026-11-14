@@ -32,6 +32,7 @@ def save_posted_title(title):
         f.write(f"{title_clean}\n")
 
 BANNED_TITLE_PHRASES = [
+    "毎日の身だしなみを見直す", "毎日の身だしなみ", "身だしなみを見直す", "身だしなみの新常識",
     "神アイテム",
     "神ギア",
     "人気アイテム",
