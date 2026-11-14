@@ -32,6 +32,33 @@ def save_posted_title(title):
         f.write(f"{title_clean}\n")
 
 BANNED_TITLE_PHRASES = [
+    "神アイテム",
+    "神ギア",
+    "人気アイテム",
+    "ねじ伏せる",
+    "無力化する",
+    "死守する",
+    "構造改革",
+    "根こそぎ",
+    "根源から断つ",
+    "完全抹消",
+    "完全制圧",
+    "頭皮の詰まり",
+    "頭皮の硬化",
+    "頭皮の停滞",
+    "深夜の濃厚補給",
+    "深夜のPC作業",
+    "深夜の",
+    "至近距離",
+    "至近距離も余裕",
+    "至近距離で差がつく",
+    "至近距離でも怯まない",
+    "至近距離でも怖くない",
+    "至近距離でも余裕",
+    "至近距離の商談",
+    "至近距離の視線",
+    "至近距離でも動じない",
+    "至近距離の会話",
     "鏡を見る", "鏡の前で", "鏡を見て", "鏡をのぞく", "鏡に映る", "鏡を見るのが", "鏡を見るたび",
     "失敗しない", "いかがでしたでしょうか", "徹底解説", "完全ガイド", "徹底比較", "後悔しない",
     "男の清潔感を高めるギア", "注目のアイテム", "おすすめアイテム", "厳選アイテム", "大人気アイテム", "話題のアイテム"
@@ -46,7 +73,7 @@ def check_title_banned_phrases(title):
             return True, f"禁止フレーズ「{phrase}」が含まれています"
     return False, None
 
-def is_title_duplicate_or_similar(new_title, threshold=0.60):
+def is_title_duplicate_or_similar(new_title, threshold=0.50):
     """
     過去のタイトルと完全一致、または類似度が閾値（60%）以上なら重複と判定
     さらに禁止フレーズや冒頭10文字被りも厳格にブロック
@@ -68,8 +95,8 @@ def is_title_duplicate_or_similar(new_title, threshold=0.60):
         if new_title.strip() == past.strip():
             return True, past, 1.0
 
-        if len(new_title) >= 10 and len(past) >= 10:
-            if new_title[:10] == past[:10]:
+        if len(new_title) >= 5 and len(past) >= 5:
+            if new_title[:5] == past[:5]:
                 return True, f"冒頭10文字重複（{past[:10]}）: {past}", 0.95
 
         clean_past = re.sub(r'[\s\d月【】選！!｜|：:・\-\[\]（）()]+', '', past)
