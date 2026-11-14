@@ -199,3 +199,4 @@ emuland-store:10811777
 honnete:10000010
 smile-hg:10034487
 ekurashikan:10000124
+e-kurashi:10037463
