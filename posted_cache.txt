@@ -218,3 +218,4 @@ bluettijapan:10000017
 gmy-company:10000204
 i-orangestore:10002022
 honest-online:10000762
+switchbot:10000043
