@@ -215,3 +215,4 @@ yurifashion:10046141
 f043214-ogawara:10002391
 wilmart:10032932
 bluettijapan:10000017
+gmy-company:10000204
