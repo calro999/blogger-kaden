@@ -222,3 +222,4 @@ switchbot:10000043
 mpowjapan:10000798
 kaguzaku:10007242
 plywoodcamp:10000639
+irisplaza-r:10140541
