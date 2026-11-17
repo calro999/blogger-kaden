@@ -228,3 +228,4 @@ sgsstore2310:10004357
 pc-express:10670017
 torreya-shop:10000070
 smilecreators:10000570
+sinsankai:10000017
