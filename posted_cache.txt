@@ -242,3 +242,4 @@ palpito:10000011
 toolandmeal:10025394
 togopower:10000031
 yckaden:10000224
+u-denki:10028316
