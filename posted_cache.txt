@@ -251,3 +251,4 @@ tescom-japan:10000376
 dog-kan:10190769
 kenkoyoyaku:10000090
 sun2shop:10018659
+tansu:10043545
