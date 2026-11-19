@@ -245,3 +245,4 @@ yckaden:10000224
 u-denki:10028316
 changhe:10000360
 lifecorner:10002614
+hagoogi:10000108
