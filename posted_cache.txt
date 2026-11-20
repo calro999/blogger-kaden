@@ -253,3 +253,4 @@ kenkoyoyaku:10000090
 sun2shop:10018659
 tansu:10043545
 plywood:10011212
+yamayuu:10018809
