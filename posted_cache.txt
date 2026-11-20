@@ -256,3 +256,4 @@ plywood:10011212
 yamayuu:10018809
 roomy:10015888
 hatusoku:10000030
+irisplaza-r:10167789
