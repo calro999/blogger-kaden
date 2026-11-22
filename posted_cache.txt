@@ -275,3 +275,4 @@ importshopaqua:10012592
 kireispot:10065279
 blazebites:10001867
 kakuyasubenri:10001145
+lifecorner:10002615
