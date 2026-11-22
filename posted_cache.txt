@@ -278,3 +278,4 @@ kakuyasubenri:10001145
 lifecorner:10002615
 hidekobashouten:10018189
 mottole-shop:10000080
+f272132-izumisano:10009021
