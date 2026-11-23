@@ -289,3 +289,4 @@ epeios-official:10000068
 rainbowshoji:10002485
 mecu:10001589
 coalink:10015865
+jinjiang:10000137
