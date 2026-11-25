@@ -309,3 +309,4 @@ sanwadirect:10091994
 seventreasure:10000637
 kadecoco:10028208
 kurasidou:10298304
+nissin-llc:10000088
