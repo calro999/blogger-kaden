@@ -314,3 +314,4 @@ roomy:10012791
 matsukageya:10223238
 cado-shop:10000059
 ida-online:10008528
+kitcut-ps:10130595
